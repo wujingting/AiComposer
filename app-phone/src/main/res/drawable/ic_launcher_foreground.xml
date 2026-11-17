@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Phone body -->
+    <path
+        android:fillColor="#FF232528"
+        android:pathData="M46,28 H62 A6,6 0 0 1 68,34 V74 A6,6 0 0 1 62,80 H46 A6,6 0 0 1 40,74 V34 A6,6 0 0 1 46,28 Z" />
+    <!-- Thirds grid -->
+    <path
+        android:strokeColor="#FFFFD400"
+        android:strokeWidth="1.2"
+        android:pathData="M49.33,33 V75 M58.67,33 V75 M43,47.00 H65 M43,61.00 H65" />
+    <!-- Subject on a thirds point -->
+    <path
+        android:fillColor="#FFFFD400"
+        android:pathData="M45.73,47.0 a3.6,3.6 0 1,0 7.2,0 a3.6,3.6 0 1,0 -7.2,0 Z" />
+</vector>

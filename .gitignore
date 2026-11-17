@@ -1,0 +1,27 @@
+# Gradle / Kotlin build output
+.gradle/
+.kotlin/
+build/
+captures/
+
+# Machine-specific
+local.properties
+.idea/
+*.iml
+
+# Generated AI model (rebuild with tools/export_clip_model.py)
+core/src/main/assets/clip_image*.onnx
+core/src/main/assets/clip_meta.json
+
+# Python
+__pycache__/
+*.pyc
+
+# OS / misc
+.DS_Store
+Thumbs.db
+*.log
+
+# Claude Code project notes: kept locally, not published
+CLAUDE.md
+CLAUDE.local.md

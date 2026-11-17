@@ -1,0 +1,5 @@
+numpy
+onnxruntime
+pillow
+# Optional: only needed for ARW files without an embedded preview (Sony ARW files normally have one)
+# rawpy

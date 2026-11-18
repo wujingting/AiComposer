@@ -164,6 +164,10 @@ class ScoreViewModel(app: Application) : AndroidViewModel(app) {
                 val focal = ((exif.focalEq35 ?: 26) / 1.5f).roundToInt().coerceAtLeast(8) // rules use APS-C millimeters
                 // The ML Kit models run on a smaller copy, like the liveview; the shared analyzer is used one photo at a time
                 val small = Bitmap.createScaledBitmap(bmp, 640, (640f * bmp.height / bmp.width).roundToInt().coerceAtLeast(1), true)
+                // CLIP point of interest: helps pick the subject when no face / body / object is recognized
+                val interest = model?.takeIf { it.supportsInterest }?.let { m ->
+                    try { m.findInterest(small)?.rect } catch (e: CancellationException) { throw e } catch (_: Throwable) { null }
+                }
                 val out = pipelineLock.withLock {
                     pipeline.reset()
                     pipeline.process(
@@ -171,7 +175,7 @@ class ScoreViewModel(app: Application) : AndroidViewModel(app) {
                             frame = small, camera = camera, focalMm = focal,
                             cropMode = CropMode.OFF, cropPlan = CropPlan(), autoKeep = 1f,
                             aesthetic = photo.aesthetic, ignoredRules = emptySet(),
-                            adviseParameters = false, still = true,
+                            adviseParameters = false, still = true, interest = interest,
                         )
                     )
                 }

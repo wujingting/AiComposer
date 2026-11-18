@@ -43,6 +43,9 @@ object CoachEngine {
         "shutter" to "sharpness", "shake" to "sharpness", "focus" to "sharpness",
     )
 
+    /** Rules whose verdict depends on where the main subject is (wrong subject = wrong advice). */
+    val SUBJECT_RULES = setOf("placement", "edge_cut", "size", "closer", "clutter", "separation", "focus")
+
     /** Convenience: get a report in one step (no temporal smoothing). */
     fun run(c: CoachInput, ignored: Set<String> = emptySet()): CoachReport = report(evaluate(c, ignored))
 
@@ -51,13 +54,34 @@ object CoachEngine {
      */
     fun evaluate(c: CoachInput, ignored: Set<String> = emptySet()): List<CheckItem> {
         val scene = c.a.scene.name
-        val raw = rules.mapNotNull { r -> runCatching { r.check(c) }.getOrNull() }
+        val raw = softenGuessed(rules.mapNotNull { r -> runCatching { r.check(c) }.getOrNull() }, c)
         val withIgnore = raw.map { item ->
             if (item.severity != Severity.OK && ("$scene:${item.id}" in ignored || "*:${item.id}" in ignored)) {
                 item.copy(severity = Severity.IGNORED, penalty = 0f, move = null)
             } else item
         }
         return resolveConflicts(withIgnore)
+    }
+
+    /**
+     * When the main subject was only inferred (color contrast, segmentation, CLIP) rather than recognized,
+     * subject-dependent problems cost less, are at most INFO, and say so instead of sounding certain.
+     */
+    fun softenGuessed(items: List<CheckItem>, c: CoachInput): List<CheckItem> {
+        if (c.a.mainSubject?.guessed != true) return items
+        val k = Cfg.f("subject.guess_penalty")
+        return items.map { item ->
+            if (item.id !in SUBJECT_RULES || item.severity !in setOf(Severity.INFO, Severity.WARN, Severity.ERROR)) item
+            else item.copy(
+                severity = Severity.INFO,
+                penalty = item.penalty * k,
+                message = tr(
+                    "（框里的主体是推测的，仅供参考）",
+                    "（枠の被写体は推定です。参考程度に）",
+                    "(The boxed subject is a guess, take this loosely) ",
+                ) + item.message,
+            )
+        }
     }
 
     /** Group de-duplication + scoring. */

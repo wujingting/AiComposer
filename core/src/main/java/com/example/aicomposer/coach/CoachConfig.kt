@@ -21,6 +21,7 @@ object Cfg {
         "penalty.warn" to 12.0,
         "penalty.error" to 25.0,
         "score.scale" to 60.0,              // score = 100 × e^(−penalty/scale); larger = gentler
+        "subject.guess_penalty" to 0.4,     // penalty factor for subject-position advice when the subject is only a guess
 
         // --- Temporal smoothing ---
         "temporal.window_ms" to 1500.0,     // how many milliseconds to look back

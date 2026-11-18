@@ -85,8 +85,9 @@ class FrameAnalyzer {
      * Analyze one frame. For a liveview stream (still = false) the slower models run every few frames and
      * motion / scene are compared with the previous frames. For an independent photo (still = true) every
      * model runs and nothing is carried over from the previous call.
+     * @param stillInterest CLIP point of interest computed for this photo (still = true only)
      */
-    suspend fun analyze(bmp: Bitmap, still: Boolean = false): AnalysisResult {
+    suspend fun analyze(bmp: Bitmap, still: Boolean = false, stillInterest: NRect? = null): AnalysisResult {
         val w = bmp.width.toFloat()
         val h = bmp.height.toFloat()
         val image = InputImage.fromBitmap(bmp, 0)
@@ -168,20 +169,20 @@ class FrameAnalyzer {
             ?.takeIf { pose -> faceInfos.isNotEmpty() || lastMask?.let { poseOnMask(pose, it) } != false }
             ?.bounds?.let { Subject(it.clampUnit(), SubjectKind.PERSON, false) }
         val maskSubject = lastMask?.foreground()?.let { (r, area) ->
-            if (area in 0.02f..0.7f) Subject(r, SubjectKind.GENERIC, false) else null
+            if (area in 0.02f..0.7f) Subject(r, SubjectKind.GENERIC, false, guessed = true) else null
         }
         // --- Classic features (incl. saliency) ---
         val features = FeatureExtractor.compute(bmp)
         val salientSubject = features.saliency.subject()?.let { (r, area) ->
-            if (area in 0.01f..0.6f) Subject(r, SubjectKind.GENERIC, false) else null
+            if (area in 0.01f..0.6f) Subject(r, SubjectKind.GENERIC, false, guessed = true) else null
         }
 
         val textSubject = lastTexts.maxByOrNull { it.rect.area }
             ?.takeIf { it.rect.area >= 0.01f }
             ?.let { Subject(it.rect, SubjectKind.TEXT, false, text = it.text.take(8)) }
-        // The CLIP point of interest belongs to the liveview; an independent photo has none
-        val freshInterest = if (still) null else interest?.takeIf { System.currentTimeMillis() - it.second < 3000 }?.first
-        val salientBlobs = features.saliency.blobRects().take(5).map { Subject(it, SubjectKind.GENERIC, false) }
+        // Liveview: the CLIP point of interest from the background loop; a photo: the one computed for it
+        val freshInterest = if (still) stillInterest else interest?.takeIf { System.currentTimeMillis() - it.second < 3000 }?.first
+        val salientBlobs = features.saliency.blobRects().take(5).map { Subject(it, SubjectKind.GENERIC, false, guessed = true) }
 
         val subjects = faceSubjects + objectSubjects
         val main = pickMain(
@@ -254,7 +255,7 @@ class FrameAnalyzer {
             generic.firstOrNull { interest.contains(it.rect.cx, it.rect.cy) }?.let {
                 return if (it.kind == SubjectKind.GENERIC) it.copy(kind = SubjectKind.INTEREST) else it
             }
-            return Subject(interest.shrink(0.6f), SubjectKind.INTEREST, false)
+            return Subject(interest.shrink(0.6f), SubjectKind.INTEREST, false, guessed = true)
         }
         return fallback
     }

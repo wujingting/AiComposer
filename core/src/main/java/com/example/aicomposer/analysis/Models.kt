@@ -58,6 +58,11 @@ data class Subject(
     val kind: SubjectKind,
     val isFace: Boolean,
     val text: String? = null,
+    /**
+     * Inferred from color contrast / segmentation / CLIP rather than recognized by a detector (face, body,
+     * object, text). Advice that depends on where the subject is gets softened for such subjects.
+     */
+    val guessed: Boolean = false,
 ) {
     val isText: Boolean get() = kind == SubjectKind.TEXT
 

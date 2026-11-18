@@ -10,6 +10,7 @@ import com.example.aicomposer.analysis.CompositionAdvice
 import com.example.aicomposer.analysis.CompositionAdvisor
 import com.example.aicomposer.analysis.CropPlan
 import com.example.aicomposer.analysis.FrameAnalyzer
+import com.example.aicomposer.analysis.NRect
 import com.example.aicomposer.analysis.ParameterAdvice
 import com.example.aicomposer.analysis.ParameterAdvisor
 import com.example.aicomposer.analysis.SceneType
@@ -97,6 +98,8 @@ class CoachPipeline(context: Context) : AutoCloseable {
         val adviseParameters: Boolean = true,
         /** An independent photo rather than a liveview frame: run every model, no motion / history. */
         val still: Boolean = false,
+        /** CLIP point of interest for a still photo (see [AestheticModel.findInterest]); liveview uses the background loop. */
+        val interest: NRect? = null,
     )
 
     data class Output(
@@ -125,7 +128,7 @@ class CoachPipeline(context: Context) : AutoCloseable {
     suspend fun process(input: Input): Output? {
         val t0 = System.currentTimeMillis()
         val raw = try {
-            analyzer.analyze(input.frame, input.still)
+            analyzer.analyze(input.frame, input.still, input.interest)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

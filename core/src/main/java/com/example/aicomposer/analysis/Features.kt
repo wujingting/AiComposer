@@ -30,6 +30,69 @@ data class PoseInfo(val points: Map<Int, P>) {
             val padY = (ys.max() - ys.min()) * 0.1f
             return NRect(xs.min() - padX, ys.min() - padY * 2, xs.max() + padX, ys.max() + padY)
         }
+
+    /**
+     * Whether the landmarks form a believable human skeleton. ML Kit Pose always returns a pose, and on scenes
+     * without people (blossoms, foliage, textures) it scatters confident-looking points that would otherwise be
+     * taken as "a person". Checks: both shoulders, plus a head or both hips, in anatomically sane positions.
+     * @param aspect frame width / height, so distances are measured in the same unit on both axes
+     */
+    fun plausible(aspect: Float): Boolean {
+        fun pt(id: Int) = points[id]?.let { P(it.x * aspect, it.y) }
+        fun dist(a: P, b: P) = sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y))
+        fun mid(a: P, b: P) = P((a.x + b.x) / 2, (a.y + b.y) / 2)
+        val ls = pt(L_SHOULDER) ?: return false
+        val rs = pt(R_SHOULDER) ?: return false
+        val shoulders = mid(ls, rs)
+        val sw = dist(ls, rs)
+        if (sw < 0.02f) return false
+
+        val head = HEAD.mapNotNull { pt(it) }
+        val lh = pt(L_HIP)
+        val rh = pt(R_HIP)
+        val hips = if (lh != null && rh != null) mid(lh, rh) else null
+        if (head.isEmpty() && hips == null) return false
+
+        // Head: above the shoulders, at a distance comparable to the shoulder width
+        if (head.isNotEmpty()) {
+            val hc = P(head.map { it.x }.average().toFloat(), head.map { it.y }.average().toFloat())
+            val d = dist(hc, shoulders)
+            if (hc.y > shoulders.y + sw * 0.2f) return false
+            if (d < sw * 0.2f || d > sw * 2.5f) return false
+        }
+        // Torso: hips below the shoulders, torso longer than wide but not absurdly so (side views shrink the width)
+        if (hips != null) {
+            val torso = dist(shoulders, hips)
+            val hw = dist(lh!!, rh!!)
+            val width = max(sw, hw)
+            if (hips.y < shoulders.y) return false
+            if (torso < width * 0.7f || torso > width * 6f) return false
+            if (hw > sw * 2.5f) return false
+        }
+        // Limbs attach near the body: an elbow / knee far from its shoulder / hip is noise
+        val limbs = listOf(L_ELBOW to L_SHOULDER, R_ELBOW to R_SHOULDER, L_KNEE to L_HIP, R_KNEE to R_HIP)
+        val torsoLen = hips?.let { dist(shoulders, it) } ?: (sw * 1.5f)
+        for ((j, root) in limbs) {
+            val a = pt(j) ?: continue
+            val b = pt(root) ?: continue
+            if (dist(a, b) > torsoLen * 1.6f + sw) return false
+        }
+        return true
+    }
+
+    companion object {
+        // ML Kit PoseLandmark type ids (kept as plain ints so this class stays free of ML Kit)
+        private const val L_SHOULDER = 11
+        private const val R_SHOULDER = 12
+        private const val L_ELBOW = 13
+        private const val R_ELBOW = 14
+        private const val L_HIP = 23
+        private const val R_HIP = 24
+        private const val L_KNEE = 25
+        private const val R_KNEE = 26
+        /** Nose, eyes, ears. */
+        private val HEAD = listOf(0, 2, 5, 7, 8)
+    }
 }
 
 /** Foreground confidence map from subject segmentation (0..1), w×h. */

@@ -121,7 +121,8 @@ class FrameAnalyzer {
                 val pts = pose.allPoseLandmarks
                     .filter { it.inFrameLikelihood > 0.5f }
                     .associate { it.landmarkType to P(it.position.x / w, it.position.y / h) }
-                if (pts.size >= 6) PoseInfo(pts) else null
+                // ML Kit always returns some pose: keep it only if it looks like a real human skeleton
+                if (pts.size >= 6) PoseInfo(pts).takeIf { it.plausible(w / h) } else null
             }.getOrNull()
         }
         if (due(6, 0) && segmenter != null && !segmentationBroken) {
@@ -162,7 +163,10 @@ class FrameAnalyzer {
         val objectSubjects = objects
             .map { o -> Subject(o.boundingBox.norm(w, h), kindOf(o.labels.firstOrNull()?.text), false) }
             .filter { it.rect.area < 0.9f }
-        val poseSubject = lastPose?.bounds?.let { Subject(it.clampUnit(), SubjectKind.PERSON, false) }
+        // A body without a visible face must also sit on the segmented foreground (when that mask exists)
+        val poseSubject = lastPose
+            ?.takeIf { pose -> faceInfos.isNotEmpty() || lastMask?.let { poseOnMask(pose, it) } != false }
+            ?.bounds?.let { Subject(it.clampUnit(), SubjectKind.PERSON, false) }
         val maskSubject = lastMask?.foreground()?.let { (r, area) ->
             if (area in 0.02f..0.7f) Subject(r, SubjectKind.GENERIC, false) else null
         }
@@ -253,6 +257,13 @@ class FrameAnalyzer {
             return Subject(interest.shrink(0.6f), SubjectKind.INTEREST, false)
         }
         return fallback
+    }
+
+    /** Share of torso / head landmarks lying on the foreground mask is at least half. */
+    private fun poseOnMask(pose: PoseInfo, mask: Mask): Boolean {
+        val core = pose.points.filterKeys { it <= 12 || it in 23..24 }.values
+        if (core.isEmpty()) return false
+        return core.count { mask.at(it.x, it.y) >= 0.3f } * 2 >= core.size
     }
 
     private fun classify(

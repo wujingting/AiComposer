@@ -17,6 +17,26 @@ import kotlin.math.roundToInt
  * subject lands on one of its thirds points, then score everything inside that window.
  * Camera-move hints also aim at making that window fit and work well.
  */
+/**
+ * The body a face belongs to: a detected person (YOLOX) or the pose, whichever contains the face center.
+ * null when there is no face subject or no body around it.
+ */
+fun AnalysisResult.bodyOf(face: Subject): NRect? {
+    if (!face.isFace) return null
+    val cx = face.rect.cx; val cy = face.rect.cy
+    return subjects.filter { it.kind == SubjectKind.PERSON && !it.isFace && it.rect.contains(cx, cy) }
+        .maxByOrNull { it.rect.area }?.rect
+        ?: pose?.bounds?.takeIf { it.contains(cx, cy) }
+}
+
+/**
+ * A half-body or full-body shot of a person (the body takes a fair share of the frame), as opposed to a
+ * head shot. Then a centered person is as valid as one on a thirds line, and the height is judged by the
+ * eye line instead of a thirds point.
+ */
+fun AnalysisResult.isPeopleShot(m: Subject? = mainSubject): Boolean =
+    m != null && (bodyOf(m)?.area ?: 0f) >= 0.15f
+
 object CompositionAdvisor {
     private val thirds = listOf(P(1 / 3f, 1 / 3f), P(2 / 3f, 1 / 3f), P(1 / 3f, 2 / 3f), P(2 / 3f, 2 / 3f))
     private val FULL = NRect(0f, 0f, 1f, 1f)
@@ -65,7 +85,13 @@ object CompositionAdvisor {
                     "${m.label.cap()} is large: make sure the edges do not cut off anything important",
                 )
             } else {
-                val candidates = if (m.isFace) thirds.filter { it.y < 0.5f } else thirds
+                val people = a.isPeopleShot(m)
+                val candidates = when {
+                    // Left/right only: center line or a thirds line; the height is left to the eye-line rule
+                    people -> listOf(1 / 3f, 0.5f, 2 / 3f).map { P(it, c.y) }
+                    m.isFace -> thirds.filter { it.y < 0.5f }
+                    else -> thirds
+                }
                 val t = candidates.minBy { dist(it, c) }
                 target = toFrame(t)
                 val d = dist(t, c)
@@ -88,6 +114,11 @@ object CompositionAdvisor {
                             "裁剪框放不下理想构图：相机$move",
                             "トリミング枠に理想の構図が収まりません：カメラを$move",
                             "The crop window cannot fit the ideal composition: $move",
+                        )
+                        else if (people) tr(
+                            "把${m.label}放到中线或三分线上：相机$move",
+                            "${m.label}を中央か三分割線へ：カメラを$move",
+                            "Put ${m.label} on the center or a thirds line: $move",
                         )
                         else tr(
                             "把${m.label}放到三分点：相机$move",

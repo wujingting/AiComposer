@@ -3,6 +3,8 @@ package com.example.aicomposer.coach
 import com.example.aicomposer.analysis.NRect
 import com.example.aicomposer.analysis.P
 import com.example.aicomposer.analysis.SceneType
+import com.example.aicomposer.analysis.bodyOf
+import com.example.aicomposer.analysis.isPeopleShot
 import com.example.aicomposer.i18n.I18n
 import com.example.aicomposer.i18n.Lang
 import com.example.aicomposer.i18n.bare
@@ -79,13 +81,18 @@ object CompositionRules {
         val tw = c.toWin(t)
         val d = hypot(tw.x - cx, tw.y - r.cy)
         val penalty = min(d / 0.3f, 1f) * Cfg.f("placement.max_penalty")
+        val people = c.a.isPeopleShot(m)
         when {
-            d < Cfg.f("placement.ok_dist") -> ok("placement", name, C, tr("主体在三分点上", "被写体が三分割の交点にあります", "Subject is on a thirds point"))
+            d < Cfg.f("placement.ok_dist") -> ok("placement", name, C,
+                if (!people) tr("主体在三分点上", "被写体が三分割の交点にあります", "Subject is on a thirds point")
+                else if (abs(tw.x - 0.5f) < 0.01f) tr("人物居中，构图稳定", "人物が中央にあり安定した構図", "The person is centered: a steady composition")
+                else tr("人物在三分线上", "人物が三分割線上にあります", "The person is on a thirds line"))
             else -> {
                 val mv = cameraMove(tw.x - cx, tw.y - r.cy)
                 item(
                     "placement", name, C, if (d < Cfg.f("placement.warn_dist")) Severity.INFO else Severity.WARN,
-                    tr("把${m.label}放到三分点：$mv", "${m.label}を三分割の交点へ：$mv", "Put ${m.label} on a thirds point: $mv"),
+                    if (people) tr("把${m.label}放到中线或三分线上：$mv", "${m.label}を中央か三分割線へ：$mv", "Put ${m.label} on the center or a thirds line: $mv")
+                    else tr("把${m.label}放到三分点：$mv", "${m.label}を三分割の交点へ：$mv", "Put ${m.label} on a thirds point: $mv"),
                     penalty,
                     move = P(tw.x - cx, tw.y - r.cy),
                     short = tr("${m.label}放到三分点", "${m.label}を三分割点へ", "${m.label.bare()} to a thirds point"),
@@ -213,7 +220,8 @@ object CompositionRules {
         val name = tr("背景杂乱", "背景のごちゃつき", "Busy background")
         val f = c.a.features ?: return@Rule null
         val m = c.a.mainSubject ?: return@Rule null
-        val r = m.rect
+        // For a face, look around the whole person: right around the face it is just their own hair and clothes
+        val r = c.a.bodyOf(m) ?: m.rect
         if (r.area > 0.5f) return@Rule null
         val ring = NRect(
             (r.l - r.w * 0.6f).coerceAtLeast(c.win.l), (r.t - r.h * 0.6f).coerceAtLeast(c.win.t),

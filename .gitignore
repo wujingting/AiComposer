@@ -12,6 +12,8 @@ local.properties
 # Generated AI model (rebuild with tools/export_clip_model.py)
 core/src/main/assets/clip_image*.onnx
 core/src/main/assets/clip_meta.json
+# Downloaded object detector (python tools/get_detector_model.py)
+core/src/main/assets/detector.onnx
 
 # Python
 __pycache__/

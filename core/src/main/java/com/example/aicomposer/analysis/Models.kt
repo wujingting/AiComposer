@@ -63,12 +63,16 @@ data class Subject(
      * object, text). Advice that depends on where the subject is gets softened for such subjects.
      */
     val guessed: Boolean = false,
+    /** Display name from a detector that knows what it is (e.g. "电车"); overrides the kind's generic name. */
+    val name: String? = null,
+    /** Detector confidence 0..1, when known. */
+    val score: Float? = null,
 ) {
     val isText: Boolean get() = kind == SubjectKind.TEXT
 
     /** Display name in the current UI language. */
     val label: String
-        get() = when (kind) {
+        get() = if (name != null && kind != SubjectKind.TEXT) name else when (kind) {
             SubjectKind.PERSON -> tr("人物", "人物", "the person")
             SubjectKind.CLOTHING -> tr("服饰", "服飾", "the clothing")
             SubjectKind.FOOD -> tr("食物", "料理", "the food")

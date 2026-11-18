@@ -97,13 +97,23 @@ Besides the rule thresholds it also has `ai.threads` (CPU threads for the aesthe
 | Model | Used for |
 |---|---|
 | ML Kit face detection (landmarks, eye-open / smile, head angles) | Portrait rules, depth-of-field estimate, look room |
-| ML Kit object detection / image labeling | Subject, scene |
+| YOLOX-S object detection (80 classes: people, cars, trains, animals, food…; optional, see below) | Subject, with what it is; also cross-checks body pose so foliage is not taken for a person |
+| ML Kit object detection / image labeling | Subject when YOLOX is not installed; scene |
 | ML Kit pose detection (33 landmarks) | People whose face is not visible, cut at a joint, full-body detection |
 | ML Kit subject segmentation | Generic subject, balance (needs Google Play services; the model downloads on first use) |
 | Saliency detection (classic algorithm, every frame) | Finds what "pops" most as the subject, works for any subject; judges whether the frame is simple |
 | ML Kit text recognition (Japanese + Latin) | Signs and slogans as subject candidates; text cut off, tilted text |
 | CLIP point of interest (about every 2 s) | Splits the frame into 9 regions, finds the most interesting one (orange dashed box), and uses it to pick the subject |
 | CLIP + LAION (optional, see below) | Aesthetic score, scene, AI framing |
+
+## Installing the object detector (one-time, recommended)
+```bash
+python tools/get_detector_model.py
+```
+Downloads YOLOX-S (Megvii, Apache-2.0, about 36 MB) to `core/src/main/assets/detector.onnx`; then rebuild the app.
+- Older phone or laggy: `--size tiny` (about 20 MB, faster, less accurate); more accurate: `--size m` (about 97 MB, about 3× slower)
+- Without it the app falls back to ML Kit object detection (5 coarse categories; misses vehicles, animals, ...)
+- Detection threshold: `detector.min_score` in `coach_config.json` (default 0.35)
 
 ## Installing the AI aesthetic model (one-time, on a computer)
 The model is about 96 MB and is not in the Git repository; generate it with the script:

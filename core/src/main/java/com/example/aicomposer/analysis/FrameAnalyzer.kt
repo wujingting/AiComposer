@@ -2,6 +2,10 @@ package com.example.aicomposer.analysis
 
 import android.graphics.Bitmap
 import android.graphics.Rect
+import com.example.aicomposer.ai.CocoClasses
+import com.example.aicomposer.ai.Detection
+import com.example.aicomposer.ai.ObjectDetector
+import com.example.aicomposer.ai.YoloxCodec
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetectorOptions
@@ -25,7 +29,7 @@ import kotlin.math.roundToInt
 /**
  * Runs every analysis on one liveview frame. Models used (all on-device):
  *   - Face detection (landmarks, eye-open / smile probability, head angles)
- *   - Object detection
+ *   - Object detection: YOLOX (80 COCO classes, see [ObjectDetector]) when installed, otherwise ML Kit
  *   - Image labeling (scene)
  *   - Pose detection (33 landmarks, used e.g. by the "cropped at a joint" rule)
  *   - Subject segmentation (generic foreground, finds a subject even without faces/objects;
@@ -65,6 +69,12 @@ class FrameAnalyzer {
     private val textRecognizer = TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
     private var lastTexts: List<TextInfo> = emptyList()
 
+    /** YOLOX detector (set by [com.example.aicomposer.pipeline.CoachPipeline]); null = not installed, use ML Kit. */
+    @Volatile
+    var detector: ObjectDetector? = null
+    /** Last YOLOX result; null when it has not run. */
+    private var lastDetections: List<Detection>? = null
+
     /** CLIP point-of-interest region and its timestamp; stale after 3 s. Written by the ViewModel. */
     @Volatile
     var interest: Pair<NRect, Long>? = null
@@ -94,13 +104,20 @@ class FrameAnalyzer {
         val n = frameCount++
         if (still) {
             prevGray = null; prevMainCenter = null; sceneHistory.clear()
-            lastLabels = emptyList(); lastTexts = emptyList(); lastPose = null; lastMask = null
+            lastLabels = emptyList(); lastTexts = emptyList(); lastPose = null; lastMask = null; lastDetections = null
         }
         fun due(every: Int, phase: Int) = still || n % every == phase
 
         // --- Models ---
         val faces = runCatching { faceDetector.process(image).await() }.getOrDefault(emptyList())
-        val objects = runCatching { objectDetector.process(image).await() }.getOrDefault(emptyList())
+        val det = detector
+        // YOLOX is slower than ML Kit: in the liveview it runs every third frame and its boxes are reused in between
+        if (det != null && (due(3, 2) || lastDetections == null)) {
+            lastDetections = runCatching { det.detect(bmp) }.getOrElse { lastDetections }
+        }
+        val detections = if (det != null) lastDetections else null
+        val objects = if (detections != null) emptyList()
+        else runCatching { objectDetector.process(image).await() }.getOrDefault(emptyList())
         if (due(4, 0)) {
             lastLabels = runCatching { labeler.process(image).await().map { it.text } }.getOrDefault(lastLabels)
         }
@@ -161,12 +178,13 @@ class FrameAnalyzer {
 
         // --- Subjects ---
         val faceSubjects = faceInfos.map { Subject(it.rect, SubjectKind.PERSON, true) }
-        val objectSubjects = objects
-            .map { o -> Subject(o.boundingBox.norm(w, h), kindOf(o.labels.firstOrNull()?.text), false) }
-            .filter { it.rect.area < 0.9f }
+        val objectSubjects = (
+            detections?.map { d -> Subject(d.rect, d.kind, false, name = d.label, score = d.score) }
+                ?: objects.map { o -> Subject(o.boundingBox.norm(w, h), kindOf(o.labels.firstOrNull()?.text), false) }
+            ).filter { it.rect.area < 0.9f && it.rect.area > 0.002f }
         // A body without a visible face must also sit on the segmented foreground (when that mask exists)
         val poseSubject = lastPose
-            ?.takeIf { pose -> faceInfos.isNotEmpty() || lastMask?.let { poseOnMask(pose, it) } != false }
+            ?.takeIf { pose -> faceInfos.isNotEmpty() || (lastMask?.let { poseOnMask(pose, it) } != false && poseHasPerson(pose, detections)) }
             ?.bounds?.let { Subject(it.clampUnit(), SubjectKind.PERSON, false) }
         val maskSubject = lastMask?.foreground()?.let { (r, area) ->
             if (area in 0.02f..0.7f) Subject(r, SubjectKind.GENERIC, false, guessed = true) else null
@@ -249,7 +267,8 @@ class FrameAnalyzer {
         if (pose != null && pose.rect.area > 0.02f) return pose
         objects.maxByOrNull { s ->
             val d = hypot(s.rect.cx - 0.5f, s.rect.cy - 0.5f)
-            s.rect.area * (1f - 0.8f * d)
+            // Bigger, more central, more certain wins; people count double (they are usually the point of the photo)
+            s.rect.area * (1f - 0.8f * d) * (s.score ?: 1f) * (if (s.kind == SubjectKind.PERSON) 2f else 1f)
         }?.let { return it }
         if (interest != null) {
             generic.firstOrNull { interest.contains(it.rect.cx, it.rect.cy) }?.let {
@@ -258,6 +277,13 @@ class FrameAnalyzer {
             return Subject(interest.shrink(0.6f), SubjectKind.INTEREST, false, guessed = true)
         }
         return fallback
+    }
+
+    /** When YOLOX ran, a faceless body must overlap a detected person. */
+    private fun poseHasPerson(pose: PoseInfo, detections: List<Detection>?): Boolean {
+        if (detections == null) return true
+        val b = pose.bounds ?: return false
+        return detections.any { it.cls == CocoClasses.PERSON && YoloxCodec.iou(it.rect, b) > 0.2f }
     }
 
     /** Share of torso / head landmarks lying on the foreground mask is at least half. */

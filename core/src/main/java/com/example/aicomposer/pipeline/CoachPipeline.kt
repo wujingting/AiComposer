@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import com.example.aicomposer.ai.AestheticModel
 import com.example.aicomposer.ai.AestheticResult
+import com.example.aicomposer.ai.ObjectDetector
 import com.example.aicomposer.analysis.AnalysisResult
 import com.example.aicomposer.analysis.AutoCropper
 import com.example.aicomposer.analysis.CompositionAdvice
@@ -78,6 +79,9 @@ fun aestheticStatus(model: AestheticModel?): String {
  */
 class CoachPipeline(context: Context) : AutoCloseable {
     val analyzer = FrameAnalyzer()
+    private val appContext = context.applicationContext
+    /** YOLOX object detector, loaded on the first frame (off the main thread); null = not installed. */
+    private val detector: ObjectDetector? by lazy { ObjectDetector.load(appContext) }
     private val temporal = TemporalFilter()
     private val guide = DirectionGuide()
     private val perfMonitor = PerfMonitor(context)
@@ -128,6 +132,7 @@ class CoachPipeline(context: Context) : AutoCloseable {
     suspend fun process(input: Input): Output? {
         val t0 = System.currentTimeMillis()
         val raw = try {
+            if (analyzer.detector == null) analyzer.detector = detector
             analyzer.analyze(input.frame, input.still, input.interest)
         } catch (e: CancellationException) {
             throw e
@@ -194,6 +199,7 @@ class CoachPipeline(context: Context) : AutoCloseable {
 
     override fun close() {
         analyzer.close()
+        analyzer.detector?.close()
     }
 }
 

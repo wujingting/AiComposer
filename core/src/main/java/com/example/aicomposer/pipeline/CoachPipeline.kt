@@ -170,7 +170,7 @@ class CoachPipeline(context: Context) : AutoCloseable {
             CoachInput(r, comp0, plan, input.camera, params, input.focalMm, input.aesthetic),
             input.ignoredRules,
         )
-        val report = CoachEngine.report(temporal.filter(rawItems))
+        val report = CoachEngine.report(temporal.filter(rawItems), input.aesthetic)
         val comp = comp0.copy(
             score = report.part(Part.COMPOSITION),
             hints = report.problems.take(3).map { it.message },

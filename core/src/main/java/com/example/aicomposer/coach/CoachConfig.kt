@@ -20,7 +20,12 @@ object Cfg {
         "penalty.info" to 4.0,
         "penalty.warn" to 12.0,
         "penalty.error" to 25.0,
-        "score.scale" to 60.0,              // score = 100 × e^(−penalty/scale); larger = gentler
+        "score.scale" to 60.0,              // part score = 100 × e^(−penalty/scale); larger = gentler
+        "total.w_composition" to 0.5,       // total = weighted mean of the part scores...
+        "total.w_light" to 0.25,
+        "total.w_tech" to 0.25,
+        "total.w_aesthetic" to 0.4,         // ...blended with the AI aesthetic score (0..1 share) when available
+        "total.error_cap" to 60.0,          // total at most this when a photo-ruining problem (closed eyes, blur...) remains
         "subject.guess_penalty" to 0.4,
         "detector.min_score" to 0.35,       // YOLOX: minimum confidence for an object to count     // penalty factor for subject-position advice when the subject is only a guess
 

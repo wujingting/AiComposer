@@ -180,7 +180,7 @@ class ScoreViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 }
                 // One photo, no temporal smoothing: report the raw results of this frame
-                val report = out?.let { CoachEngine.report(it.rawItems) }
+                val report = out?.let { CoachEngine.report(it.rawItems, photo.aesthetic) }
                 _ui.update { s ->
                     if (s.detail?.id != id) s else s.copy(
                         detail = s.detail.copy(

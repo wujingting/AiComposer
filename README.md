@@ -73,7 +73,8 @@ About 45 rules in `coach/`, in several categories. Each one says "what is wrong 
 | Aesthetics | CLIP aesthetic score |
 
 - Severity: Problem (−25) > Warning (−12) > Note (−4) > Tip (no penalty) > ✓
-- Score = 100 × e^(−total penalty / 60), split into **Composition / Light / Technical** parts plus a total
+- Part score = 100 × e^(−penalty / 60) for **Composition / Light / Technical**
+- Total = weighted mean of the parts (composition 50%, light 25%, technical 25%), blended 60:40 with the aesthetic score when the model is installed, and capped at 60 when a photo-ruining problem (closed eyes, blur) remains. Weights: `total.*` in `coach_config.json`
 - **Root-cause grouping**: problems with the same cause cost points only once (e.g. "busy background", "subject separation" and "subject too small" are one group); the others are marked "same cause"
 - **Temporal smoothing**: a problem is reported only when it appears in more than 60% of the last 1.5 s, and removed only when it drops below 30%, so hints do not flicker
 - **Auto shutter**: uses the composition score (+ aesthetics); it does not fire while this very moment has a portrait or technical "problem" (closed eyes, blur, not enough depth of field). Light problems do not block it (fixable in post)

@@ -1,5 +1,6 @@
 package com.example.aicomposer.coach
 
+import com.example.aicomposer.ai.AestheticResult
 import com.example.aicomposer.i18n.tr
 import com.example.aicomposer.analysis.P
 import kotlin.math.abs
@@ -11,9 +12,11 @@ import kotlin.math.roundToInt
  *
  *   evaluate()  run all rules -> items the user marked as "intentional" cost nothing -> resolve direction conflicts
  *   (TemporalFilter: keep only persistent problems, see TemporalFilter.kt)
- *   report()    root-cause grouping (one penalty per group) -> total score and part scores
+ *   report()    root-cause grouping (one penalty per group) -> part scores -> total score
  *
- * score = 100 × e^(−penalty / score.scale). Default scale=60: penalty 12 -> 82; 25 -> 66; 50 -> 43.
+ * Part score = 100 × e^(−penalty / score.scale). Default scale=60: penalty 12 -> 82; 25 -> 66; 50 -> 43.
+ * Total = weighted mean of the parts (total.w_*), blended with the AI aesthetic score when available
+ * (total.w_aesthetic), and capped at total.error_cap when a photo-ruining problem (ERROR) remains.
  * New rules: write a Rule in any *Rules.kt and add it to that file's all list.
  */
 object CoachEngine {
@@ -84,14 +87,32 @@ object CoachEngine {
         }
     }
 
-    /** Group de-duplication + scoring. */
-    fun report(items: List<CheckItem>): CoachReport {
+    /** Group de-duplication + scoring. [aesthetic] (optional) is blended into the total. */
+    fun report(items: List<CheckItem>, aesthetic: AestheticResult? = null): CoachReport {
         val grouped = mergeGroups(items)
         val scale = Cfg.d("score.scale")
         fun score(list: List<CheckItem>): Int =
             (100 * exp(-list.sumOf { it.penalty.toDouble() } / scale)).roundToInt().coerceIn(0, 100)
         val parts = Part.entries.associateWith { p -> score(grouped.filter { it.category.part() == p }) }
-        return CoachReport(score(grouped), grouped, parts)
+        return CoachReport(total(parts, grouped, aesthetic), grouped, parts)
+    }
+
+    /**
+     * Total score. A weighted mean, not a product: a weak part lowers the total in proportion instead of
+     * multiplying down with every other part.
+     */
+    fun total(parts: Map<Part, Int>, items: List<CheckItem>, aesthetic: AestheticResult?): Int {
+        val w = mapOf(
+            Part.COMPOSITION to Cfg.d("total.w_composition"),
+            Part.LIGHT to Cfg.d("total.w_light"),
+            Part.TECH to Cfg.d("total.w_tech"),
+        )
+        val checklist = Part.entries.sumOf { (parts[it] ?: 100) * w.getValue(it) } / w.values.sum()
+        val wa = Cfg.d("total.w_aesthetic").coerceIn(0.0, 1.0)
+        var t = if (aesthetic != null) checklist * (1 - wa) + aesthetic.norm * wa else checklist
+        val ruined = items.any { it.severity == Severity.ERROR && it.penalty > 0f }
+        if (ruined) t = minOf(t, Cfg.d("total.error_cap"))
+        return t.roundToInt().coerceIn(0, 100)
     }
 
     /** Within a group only the item with the largest penalty is kept; the others get zero penalty and a note. */

@@ -14,6 +14,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.nio.FloatBuffer
+import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.read
+import kotlin.concurrent.write
 import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.min
@@ -96,6 +99,9 @@ class AestheticModel private constructor(
     val supportsInterest: Boolean get() = meta.interestPos != null && meta.interestNeg != null
 
     private val inputName = session.inputNames.first()
+    /** Runs share the read lock (ORT sessions allow concurrent runs); [close] takes the write lock. */
+    private val runLock = ReentrantReadWriteLock()
+    private var closed = false // guarded by runLock
 
     /** Aesthetic analysis of the whole frame. */
     fun analyze(frame: Bitmap): AestheticResult {
@@ -234,11 +240,14 @@ class AestheticModel private constructor(
         val buf = FloatBuffer.allocate(n * 3 * s * s)
         images.forEach { preprocess(it, buf) }
         buf.rewind()
-        OnnxTensor.createTensor(env, buf, longArrayOf(n.toLong(), 3, s.toLong(), s.toLong())).use { input ->
-            session.run(mapOf(inputName to input)).use { result ->
-                @Suppress("UNCHECKED_CAST")
-                val out = result[0].value as Array<FloatArray>
-                return out.map { l2(it) }
+        return runLock.read {
+            check(!closed) { "aesthetic model is closed" }
+            OnnxTensor.createTensor(env, buf, longArrayOf(n.toLong(), 3, s.toLong(), s.toLong())).use { input ->
+                session.run(mapOf(inputName to input)).use { result ->
+                    @Suppress("UNCHECKED_CAST")
+                    val out = result[0].value as Array<FloatArray>
+                    out.map { l2(it) }
+                }
             }
         }
     }
@@ -270,8 +279,12 @@ class AestheticModel private constructor(
 
     private fun score(e: FloatArray) = dot(meta.headW, e) + meta.headB
 
-    override fun close() {
-        session.close()
+    /** Waits for any run in progress (another thread) before freeing the native session; later runs throw. */
+    override fun close() = runLock.write {
+        if (!closed) {
+            closed = true
+            session.close()
+        }
     }
 
     companion object {

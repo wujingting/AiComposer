@@ -12,6 +12,9 @@ import com.example.aicomposer.coach.Cfg
 import com.example.aicomposer.i18n.tr
 import java.io.File
 import java.nio.FloatBuffer
+import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.read
+import kotlin.concurrent.write
 import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.min
@@ -40,6 +43,9 @@ class ObjectDetector private constructor(
     /** Square input size read from the model (640 for yolox_s/m, 416 for tiny/nano). */
     private val size: Int = (session.inputInfo[inputName]?.info as? ai.onnxruntime.TensorInfo)
         ?.shape?.getOrNull(3)?.toInt()?.takeIf { it > 0 } ?: 640
+    /** Runs share the read lock (ORT sessions allow concurrent runs); [close] takes the write lock. */
+    private val runLock = ReentrantReadWriteLock()
+    private var closed = false // guarded by runLock
 
     fun detect(bmp: Bitmap): List<Detection> {
         val r = min(size.toFloat() / bmp.width, size.toFloat() / bmp.height)
@@ -50,10 +56,13 @@ class ObjectDetector private constructor(
         scaled.getPixels(px, 0, sw, 0, 0, sw, sh)
         if (scaled !== bmp) scaled.recycle()
         val input = YoloxCodec.preprocess(px, sw, sh, size)
-        val raw = OnnxTensor.createTensor(env, FloatBuffer.wrap(input), longArrayOf(1, 3, size.toLong(), size.toLong())).use { t ->
-            session.run(mapOf(inputName to t)).use { res ->
-                val fb = (res[0] as OnnxTensor).floatBuffer
-                FloatArray(fb.remaining()).also { fb.get(it) }
+        val raw = runLock.read {
+            check(!closed) { "object detector is closed" }
+            OnnxTensor.createTensor(env, FloatBuffer.wrap(input), longArrayOf(1, 3, size.toLong(), size.toLong())).use { t ->
+                session.run(mapOf(inputName to t)).use { res ->
+                    val fb = (res[0] as OnnxTensor).floatBuffer
+                    FloatArray(fb.remaining()).also { fb.get(it) }
+                }
             }
         }
         return YoloxCodec.decode(
@@ -62,8 +71,12 @@ class ObjectDetector private constructor(
         )
     }
 
-    override fun close() {
-        session.close()
+    /** Waits for any run in progress (another thread) before freeing the native session; later runs throw. */
+    override fun close() = runLock.write {
+        if (!closed) {
+            closed = true
+            session.close()
+        }
     }
 
     companion object {

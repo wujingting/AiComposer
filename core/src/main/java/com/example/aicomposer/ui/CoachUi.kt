@@ -43,14 +43,20 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.inset
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -64,6 +70,7 @@ import com.example.aicomposer.coach.CheckItem
 import com.example.aicomposer.coach.CoachReport
 import com.example.aicomposer.coach.Part
 import com.example.aicomposer.coach.Severity
+import com.example.aicomposer.i18n.bare
 import com.example.aicomposer.i18n.tr
 import com.example.aicomposer.pipeline.CameraTurn
 import com.example.aicomposer.pipeline.CropMode
@@ -97,12 +104,8 @@ fun scoreColor(score: Int, threshold: Int = 80): Color = when {
 // ---------------------------------------------------------------------------
 
 /**
- * Graphic overlay for a frame of size imgW × imgH shown with ContentScale.Fit (letterboxed, centered):
- * crop window, thirds grid, detection boxes, subject -> target arrow, text boxes, point of interest,
- * pose landmarks, AI framing and spirit level. No text, so it never hides the image.
- *
- * With [guide] (liveview only) it also draws the big direction arrows on the image edges and gives one short
- * vibration each time the framing falls into place.
+ * Overlay for a centered, fitted image. The subject, target line, level and (liveview, with [guide]) the
+ * direction arrows plus the "in place" vibration are always on; [showDetails] adds the recognition and framing guides.
  */
 @Composable
 fun CoachOverlay(
@@ -113,6 +116,7 @@ fun CoachOverlay(
     aiCrop: NRect?,
     modifier: Modifier = Modifier,
     guide: GuideState? = null,
+    showDetails: Boolean = false,
 ) {
     val turn = guide?.turn ?: CameraTurn.NONE
     if (guide != null) InPlaceHaptic(guide.inPlaceCount)
@@ -123,123 +127,108 @@ fun CoachOverlay(
     if (turn.dy != 0) kept[1] = turn.dy
     val ax by animateFloatAsState(if (turn.dx != 0) 1f else 0f, tween(if (turn.dx != 0) 150 else 260), label = "arrowX")
     val ay by animateFloatAsState(if (turn.dy != 0) 1f else 0f, tween(if (turn.dy != 0) 150 else 260), label = "arrowY")
-    val description = turnDescription(turn)
+    val subject = analysis?.mainSubject
+    val label = subject?.let { if (it.guessed) tr("推测主体", "推定被写体", "Likely subject") else it.label.bare() }
+    val measurer = rememberTextMeasurer()
+    val labelStyle = TextStyle(color = CoachColors.Ink, fontSize = CoachType.Caption, fontWeight = FontWeight.SemiBold)
+    val description = listOfNotNull(label, turnDescription(turn)).joinToString(", ")
 
-    Canvas(if (description != null) modifier.semantics { contentDescription = description } else modifier) {
+    Canvas(if (description.isEmpty()) modifier else modifier.semantics { contentDescription = description }) {
+        if (imgW <= 0 || imgH <= 0 || size.isEmpty()) return@Canvas
         val scale = min(size.width / imgW, size.height / imgH)
         val dw = imgW * scale
         val dh = imgH * scale
         val ox = (size.width - dw) / 2f
         val oy = (size.height - dh) / 2f
-        fun px(x: Float) = ox + x * dw
-        fun py(y: Float) = oy + y * dh
+        inset(ox, oy) {
+            clipRect {
+                if (showDetails) drawRecognitionDetails(analysis, composition?.cropRect, aiCrop)
 
-        // Planned crop: darken outside the crop window, white frame marks the expected final image
-        val win = composition?.cropRect
-        if (win != null) {
-            val dim = Color(0x88000000)
-            drawRect(dim, Offset(px(0f), py(0f)), Size(dw, win.t * dh))
-            drawRect(dim, Offset(px(0f), py(win.b)), Size(dw, (1f - win.b) * dh))
-            drawRect(dim, Offset(px(0f), py(win.t)), Size(win.l * dw, win.h * dh))
-            drawRect(dim, Offset(px(win.r), py(win.t)), Size((1f - win.r) * dw, win.h * dh))
-            drawRect(Color.White, Offset(px(win.l), py(win.t)), Size(win.w * dw, win.h * dh), style = Stroke(3f))
-        }
+                val sc = composition?.subjectCenter
+                val tg = composition?.target
+                if (sc != null && tg != null) {
+                    val from = Offset(sc.x * dw, sc.y * dh)
+                    val to = Offset(tg.x * dw, tg.y * dh)
+                    drawLine(CoachColors.Good, from, to, 3f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 10f)))
+                    drawCircle(CoachColors.Good, 16f, to, style = Stroke(3f))
+                    drawCircle(CoachColors.Good, 6f, from)
+                }
 
-        // Thirds grid (drawn inside the crop window in crop mode)
-        val gl = win?.l ?: 0f
-        val gt = win?.t ?: 0f
-        val gw = win?.w ?: 1f
-        val gh = win?.h ?: 1f
-        val grid = Color.White.copy(alpha = 0.45f)
-        for (i in 1..2) {
-            val x = gl + gw * i / 3f
-            val y = gt + gh * i / 3f
-            drawLine(grid, Offset(px(x), py(gt)), Offset(px(x), py(gt + gh)), 1.5f)
-            drawLine(grid, Offset(px(gl), py(y)), Offset(px(gl + gw), py(y)), 1.5f)
-        }
+                analysis?.tiltDeg?.let { t ->
+                    val len = dw * 0.22f
+                    val rad = Math.toRadians(t.toDouble())
+                    val tilt = Offset((cos(rad) * len).toFloat(), (sin(rad) * len).toFloat())
+                    val horizontal = Offset(len, 0f)
+                    drawLine(Color.White.copy(alpha = 0.5f), center - horizontal, center + horizontal, 2f)
+                    drawLine(if (abs(t) < 1f) CoachColors.Good else CoachColors.Warn, center - tilt, center + tilt, 4f)
+                }
 
-        // Detection boxes
-        analysis?.subjects?.forEach { b ->
-            val main = b == analysis.mainSubject
-            drawRect(
-                color = if (b.isFace) CoachColors.Signal else Color(0xFF5CE1E6),
-                topLeft = Offset(px(b.rect.l), py(b.rect.t)),
-                size = Size(b.rect.w * dw, b.rect.h * dh),
-                style = Stroke(if (main) 4f else 2f),
-            )
-        }
+                if (subject != null && label != null) {
+                    drawFrame(subject.rect, CoachColors.Signal, Stroke(2.dp.toPx()))
+                    val padX = 4.dp.toPx()
+                    val padY = 1.dp.toPx()
+                    val text = measurer.measure(
+                        label, style = labelStyle, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
+                        constraints = Constraints(maxWidth = (dw - 2 * padX).toInt().coerceAtLeast(1)),
+                    )
+                    val tag = Size(text.size.width + 2 * padX, text.size.height + 2 * padY)
+                    val boxTop = subject.rect.t * dh
+                    val x = (subject.rect.l * dw).coerceIn(0f, (dw - tag.width).coerceAtLeast(0f))
+                    val y = (if (boxTop >= tag.height) boxTop - tag.height else boxTop)
+                        .coerceIn(0f, (dh - tag.height).coerceAtLeast(0f))
+                    drawRect(CoachColors.Signal, Offset(x, y), tag)
+                    drawText(text, topLeft = Offset(x + padX, y + padY))
+                }
 
-        // Subject -> target thirds point
-        composition?.let { c ->
-            val sc = c.subjectCenter
-            val tg = c.target
-            if (sc != null && tg != null) {
-                val from = Offset(px(sc.x), py(sc.y))
-                val to = Offset(px(tg.x), py(tg.y))
-                drawLine(CoachColors.Good, from, to, 3f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 10f)))
-                drawCircle(CoachColors.Good, 16f, to, style = Stroke(3f))
-                drawCircle(Color.White, 6f, from)
+                // Direction arrows are the "what to do" guidance: always shown, drawn last so nothing covers them
+                val s = (min(dw, dh) * 0.18f).coerceIn(44.dp.toPx(), 84.dp.toPx())
+                val m = 10.dp.toPx() + s / 2f
+                if (ax > 0.01f && kept[0] != 0) {
+                    val right = kept[0] > 0
+                    directionArrow(Offset(if (right) dw - m else m, dh / 2f), if (right) 0f else 180f, s, ax)
+                }
+                if (ay > 0.01f && kept[1] != 0) {
+                    val down = kept[1] > 0
+                    directionArrow(Offset(dw / 2f, if (down) dh - m else m), if (down) 90f else 270f, s, ay)
+                }
             }
         }
+    }
+}
 
-        // Recognized text (thin white boxes)
-        analysis?.texts?.forEach { t ->
-            drawRect(
-                color = Color.White.copy(alpha = 0.7f),
-                topLeft = Offset(px(t.rect.l), py(t.rect.t)),
-                size = Size(t.rect.w * dw, t.rect.h * dh),
-                style = Stroke(1.5f),
-            )
-        }
+private fun DrawScope.drawFrame(rect: NRect, color: Color, stroke: Stroke) {
+    drawRect(color, Offset(rect.l * size.width, rect.t * size.height),
+        Size(rect.w * size.width, rect.h * size.height), style = stroke)
+}
 
-        // CLIP point of interest (orange dashed)
-        analysis?.interest?.let { r ->
-            drawRect(
-                color = CoachColors.Warn,
-                topLeft = Offset(px(r.l), py(r.t)),
-                size = Size(r.w * dw, r.h * dh),
-                style = Stroke(2f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 8f))),
-            )
-        }
-
-        // Pose landmarks
-        analysis?.pose?.points?.values?.forEach { p ->
-            drawCircle(Color(0xFF80DEEA), 4f, Offset(px(p.x), py(p.y)))
-        }
-
-        // AI suggested framing
-        if (aiCrop != null && (aiCrop.w < 0.99f || aiCrop.h < 0.99f)) {
-            drawRect(
-                color = CoachColors.Ai,
-                topLeft = Offset(px(aiCrop.l), py(aiCrop.t)),
-                size = Size(aiCrop.w * dw, aiCrop.h * dh),
-                style = Stroke(4f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(20f, 12f))),
-            )
-        }
-
-        // Spirit level
-        analysis?.tiltDeg?.let { t ->
-            val cx = px(0.5f)
-            val cy = py(0.5f)
-            val len = dw * 0.22f
-            val rad = Math.toRadians(t.toDouble())
-            val dx = (cos(rad) * len).toFloat()
-            val dy = (sin(rad) * len).toFloat()
-            drawLine(Color.White.copy(alpha = 0.5f), Offset(cx - len, cy), Offset(cx + len, cy), 2f)
-            drawLine(if (abs(t) < 1f) CoachColors.Good else CoachColors.Warn, Offset(cx - dx, cy - dy), Offset(cx + dx, cy + dy), 4f)
-        }
-
-        // Direction arrows: on the edge of the image the camera should turn towards
-        val s = (min(dw, dh) * 0.18f).coerceIn(44.dp.toPx(), 84.dp.toPx())
-        val m = 10.dp.toPx() + s / 2f
-        if (ax > 0.01f && kept[0] != 0) {
-            val right = kept[0] > 0
-            directionArrow(Offset(if (right) ox + dw - m else ox + m, oy + dh / 2f), if (right) 0f else 180f, s, ax)
-        }
-        if (ay > 0.01f && kept[1] != 0) {
-            val down = kept[1] > 0
-            directionArrow(Offset(ox + dw / 2f, if (down) oy + dh - m else oy + m), if (down) 90f else 270f, s, ay)
-        }
+/** Secondary layers share the same fitted-image coordinates as the primary subject. */
+private fun DrawScope.drawRecognitionDetails(analysis: AnalysisResult?, crop: NRect?, aiCrop: NRect?) {
+    val w = size.width
+    val h = size.height
+    if (crop != null) {
+        val dim = Color.Black.copy(alpha = 0.53f)
+        drawRect(dim, size = Size(w, crop.t * h))
+        drawRect(dim, Offset(0f, crop.b * h), Size(w, (1f - crop.b) * h))
+        drawRect(dim, Offset(0f, crop.t * h), Size(crop.l * w, crop.h * h))
+        drawRect(dim, Offset(crop.r * w, crop.t * h), Size((1f - crop.r) * w, crop.h * h))
+        drawFrame(crop, Color.White, Stroke(3f))
+    }
+    val grid = crop ?: NRect(0f, 0f, 1f, 1f)
+    val gridColor = Color.White.copy(alpha = 0.45f)
+    for (i in 1..2) {
+        val x = (grid.l + grid.w * i / 3f) * w
+        val y = (grid.t + grid.h * i / 3f) * h
+        drawLine(gridColor, Offset(x, grid.t * h), Offset(x, grid.b * h), 1.5f)
+        drawLine(gridColor, Offset(grid.l * w, y), Offset(grid.r * w, y), 1.5f)
+    }
+    analysis?.subjects?.forEach { if (it != analysis.mainSubject) drawFrame(it.rect, DetectionCyan, Stroke(2f)) }
+    analysis?.texts?.forEach { drawFrame(it.rect, Color.White.copy(alpha = 0.7f), Stroke(1.5f)) }
+    analysis?.interest?.let {
+        drawFrame(it, CoachColors.Warn, Stroke(2f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 8f))))
+    }
+    analysis?.pose?.points?.values?.forEach { p -> drawCircle(PoseCyan, 4f, Offset(p.x * w, p.y * h)) }
+    if (aiCrop != null && (aiCrop.w < 0.99f || aiCrop.h < 0.99f)) {
+        drawFrame(aiCrop, CoachColors.Ai, Stroke(4f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(20f, 12f))))
     }
 }
 

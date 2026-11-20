@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -26,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -50,17 +52,31 @@ private val PANEL_WIDTH = 340.dp
 fun MainScreen(vm: MainViewModel) {
     val s by vm.ui.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    var showDetails by rememberSaveable { mutableStateOf(false) }
+    val findCrop: () -> Unit = {
+        showDetails = true
+        vm.findBestCrop()
+    }
     // Layout follows the phone orientation: landscape = viewfinder left + panel right; portrait = viewfinder top + panel bottom
     // Panel from top to bottom: hint strip (fixed height) -> Guide / Settings tab (scrollable) -> action buttons (pinned at the bottom, never move)
     val cfg = LocalConfiguration.current
     if (cfg.orientation == Configuration.ORIENTATION_LANDSCAPE) {
         Row(Modifier.fillMaxSize().background(Color.Black)) {
-            Viewfinder(s, vm, Modifier.weight(1f).fillMaxHeight())
+            Column(
+                Modifier.weight(1f).fillMaxHeight(),
+                verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                val previewSize = if (s.frameW > 0) {
+                    Modifier.weight(1f, fill = false).aspectRatio(s.frameW.toFloat() / s.frameH)
+                } else Modifier.weight(1f).fillMaxWidth()
+                Viewfinder(s, vm, showDetails, previewSize)
+                if (s.frameW > 0) OverlayLegend(showDetails, liveView = true)
+            }
             Column(Modifier.width(PANEL_WIDTH).fillMaxHeight().background(CoachColors.PanelBg)) {
-                Hints(s)
+                Hints(s, showDetails)
                 TabBar(tab) { tab = it }
-                PanelContent(s, vm, tab, Modifier.weight(1f))
-                ActionBar(s, vm)
+                PanelContent(s, vm, tab, showDetails, Modifier.weight(1f)) { showDetails = it }
+                ActionBar(s, vm, findCrop)
             }
         }
     } else {
@@ -68,28 +84,29 @@ fun MainScreen(vm: MainViewModel) {
         val aspect = if (s.frameW > 0) s.frameW.toFloat() / s.frameH else 1.5f
         val vfHeight = minOf(cfg.screenWidthDp / aspect, cfg.screenHeightDp * 0.45f).dp
         Column(Modifier.fillMaxSize().background(CoachColors.PanelBg)) {
-            Viewfinder(s, vm, Modifier.fillMaxWidth().height(vfHeight).background(Color.Black))
-            Hints(s)
+            Viewfinder(s, vm, showDetails, Modifier.fillMaxWidth().height(vfHeight).background(Color.Black))
+            if (s.frameW > 0) OverlayLegend(showDetails, liveView = true)
+            Hints(s, showDetails)
             TabBar(tab) { tab = it }
-            PanelContent(s, vm, tab, Modifier.weight(1f))
-            ActionBar(s, vm)
+            PanelContent(s, vm, tab, showDetails, Modifier.weight(1f)) { showDetails = it }
+            ActionBar(s, vm, findCrop)
         }
     }
 }
 
 @Composable
-private fun Hints(s: UiState) {
+private fun Hints(s: UiState, showDetails: Boolean) {
     val headline = coachHeadline(s.composition, s.aesthetic, s.combinedScore, s.autoThreshold, s.params?.scene)
     HintStrip(
         headline,
-        hintLines(s.zoomHint, s.crop?.let { it.short ?: it.hint }, s.report),
+        hintLines(s.zoomHint, s.crop?.takeIf { showDetails }?.let { it.short ?: it.hint }, s.report),
         placeholder = s.message.ifEmpty { tr("未连接相机", "カメラ未接続", "Camera not connected") },
     )
 }
 
 /** Bottom action bar: button positions are fixed and never move with the hints */
 @Composable
-private fun ActionBar(s: UiState, vm: MainViewModel) {
+private fun ActionBar(s: UiState, vm: MainViewModel, onFindCrop: () -> Unit) {
     val connected = s.conn == ConnState.CONNECTED
     val pad = PaddingValues(horizontal = 4.dp, vertical = 10.dp)
     val tall = Modifier.heightIn(min = 52.dp)
@@ -107,7 +124,7 @@ private fun ActionBar(s: UiState, vm: MainViewModel) {
             ) { Text(tr("应用建议", "提案を適用", "Apply"), maxLines = 1) }
             OutlinedButton(
                 colors = secondaryButtonColors(),
-                onClick = { vm.findBestCrop() }, enabled = connected && s.aiAvailable && !s.cropBusy,
+                onClick = onFindCrop, enabled = connected && s.aiAvailable && !s.cropBusy,
                 contentPadding = pad, modifier = Modifier.weight(1f).then(tall),
             ) { Text(if (s.cropBusy) tr("分析中…", "分析中…", "Working…") else tr("AI构图", "AI 構図", "AI framing"), maxLines = 1) }
         }
@@ -141,13 +158,13 @@ private fun ActionBar(s: UiState, vm: MainViewModel) {
     }
 }
 
-/** Viewfinder image + graphic overlays (text hints live in the hint strip so they do not cover the image) */
+/** Live image and its aligned overlay. */
 @Composable
-private fun Viewfinder(s: UiState, vm: MainViewModel, modifier: Modifier) {
+private fun Viewfinder(s: UiState, vm: MainViewModel, showDetails: Boolean, modifier: Modifier) {
     Box(modifier) {
         if (s.frameW > 0) {
             LiveImage(vm, Modifier.fillMaxSize())
-            CoachOverlay(s.frameW, s.frameH, s.analysis, s.composition, s.crop?.rect, Modifier.fillMaxSize(), guide = s.guide)
+            CoachOverlay(s.frameW, s.frameH, s.analysis, s.composition, s.crop?.rect, Modifier.fillMaxSize(), guide = s.guide, showDetails = showDetails)
             s.framingReference?.let { reference ->
                 FramingReferenceCard(reference, vm::dismissFramingReference, Modifier.align(Alignment.TopEnd).padding(8.dp))
             }
@@ -198,14 +215,20 @@ private fun LiveImage(vm: MainViewModel, modifier: Modifier) {
 }
 
 @Composable
-private fun PanelContent(s: UiState, vm: MainViewModel, tab: Int, modifier: Modifier) {
+private fun PanelContent(
+    s: UiState, vm: MainViewModel, tab: Int, showDetails: Boolean, modifier: Modifier,
+    onDetailsChange: (Boolean) -> Unit,
+) {
     // Each tab remembers its own scroll position
     key(tab) {
         Column(
             modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            if (tab == 0) GuideTab(s, vm) else SettingsTab(s, vm)
+            if (tab == 0) GuideTab(s, vm) else {
+                RecognitionDetailsToggle(showDetails, onDetailsChange)
+                SettingsTab(s, vm)
+            }
         }
     }
 }

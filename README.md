@@ -21,8 +21,8 @@ The sections below describe the Sony camera version in detail first (most of it 
 | Feature | Description |
 |---|---|
 | Live view | Liveview stream from the Sony Camera Remote API |
-| Thirds grid + composition score | Distance from the subject to the nearest thirds point, touching edges, headroom, horizon; combined into a 0–100 score |
-| Subject detection | ML Kit face + object detection (offline). Yellow box = face, cyan box = object, thick box = main subject |
+| Composition score | Subject distance from the nearest thirds point, edge contact, headroom and horizon contribute to the 0–100 score. Turn on recognition details to see the thirds grid |
+| Subject detection | A yellow box names the main subject, such as “Person” or “Train”. With recognition details on, cyan boxes mark other detected faces and objects |
 | Composition hints | "Put the person on a thirds point: pan right and tilt down" |
 | Spirit level | Finds the horizon in the frame and shows its tilt |
 | Scene detection | Portrait / landscape / night / action / close-up / everyday snapshot |
@@ -30,10 +30,10 @@ The sections below describe the Sony camera version in detail first (most of it 
 | One-tap apply | Writes the suggested settings to the camera (limited by the mode dial, see below) |
 | **AI aesthetic score** | CLIP ViT-B/32 + LAION aesthetic head, about once per second |
 | **AI scene detection** | Zero-shot classification on the same CLIP embedding, more reliable than the rules (action and low light still use rules) |
-| **AI framing** | Shows a reference thumbnail from the frame you see when you tap. Standard mode compares 19 compositions and keeps the original framing when cropping offers little improvement. A dashed purple box briefly marks any suggested crop |
-| **Planned crop** | When the lens is not long enough, set how much you will crop later and the final aspect ratio; composition is scored inside the white frame (expected final image), and the safe shutter speed and ISO limit are tightened automatically |
+| **AI framing** | Tap AI framing to turn on recognition details and see a reference thumbnail from that frame. Standard mode compares 19 compositions and keeps the original framing when cropping offers little improvement. A dashed purple box briefly marks any suggested crop |
+| **Planned crop** | When the lens is too short, set the crop amount and final aspect ratio. The app scores composition within the planned crop and adjusts the safe shutter speed and ISO limit |
 | Auto shutter | Fires when the combined score (composition rules + aesthetics) stays above the threshold for about 0.75 s, at least 4 s apart |
-| **Direction arrows** | Big yellow arrows on the edge of the viewfinder show which way to turn the camera; one short vibration when the framing falls into place (at most once every 4 s) |
+| **Direction arrows** | Yellow arrows at the edge of the viewfinder show which way to turn. A short vibration signals when the framing falls into place (at most once every 4 s) |
 
 ## UI
 - **Landscape**: viewfinder on the left, panel on the right. **Portrait**: viewfinder on top, panel below.
@@ -43,8 +43,9 @@ The sections below describe the Sony camera version in detail first (most of it 
   3. **Settings tab**: auto-shutter threshold, lens focal length, planned crop, ignored rules.
   4. **Bottom action bar** (fixed position): Shoot / Apply / AI framing, auto-shutter switch, Connect / Disconnect.
 - In both the Sony and phone apps, the reference thumbnail stays fixed so you can compare it with the live view as you move the camera. Tap **AI framing** again to refresh it from the current frame, or use the close button to hide it.
-- The viewfinder shows the thirds grid, detection boxes, spirit level and direction arrows. The Guide panel holds the detailed advice.
-- Built for outdoor use: large text, neutral grey surround (does not bias how you judge the photo's colors), and one signal color: **yellow = what to do** (main button, current choice, arrows); green / orange / red = good / warning / problem. All three apps share these colors and the type scale (`core/ui/Theme.kt`).
+- By default the viewfinder shows a labeled yellow subject box, a dashed green line from the subject to the composition target, and a spirit level (green when level, orange when tilted). A single-line color key sits below the image and scrolls horizontally.
+- In Settings, turn on **Show recognition details** to see the thirds grid, other detections, pose landmarks and crop guides. The switch starts off; the direction arrows are always shown.
+- The outdoor UI uses large text and a neutral grey background. On the control panel, yellow marks primary actions and the current selection. Green, orange and red indicate good, warning and problem states. All three apps share these colors and the type scale (`core/ui/Theme.kt`).
 
 ## Build and run (first time)
 1. Install **Android Studio** (Windows or Mac) and let the setup wizard install the SDK.
@@ -105,7 +106,7 @@ Besides the rule thresholds it also has `ai.threads` (CPU threads for the aesthe
 | ML Kit subject segmentation | Generic subject, balance (needs Google Play services; the model downloads on first use) |
 | Saliency detection (classic algorithm, every frame) | Finds what "pops" most as the subject, works for any subject; judges whether the frame is simple |
 | ML Kit text recognition (Japanese + Latin) | Signs and slogans as subject candidates; text cut off, tilted text |
-| CLIP point of interest (about every 2 s) | Splits the frame into 9 regions, finds the most interesting one (orange dashed box), and uses it to pick the subject |
+| CLIP point of interest (about every 2 s) | Splits the frame into 9 regions and uses the most interesting one to pick the subject. An orange dashed box marks that region when recognition details are on |
 | CLIP + LAION (optional, see below) | Aesthetic score, scene, AI framing |
 
 ## Installing the object detector (one-time, recommended)
@@ -161,7 +162,7 @@ For anything it cannot set, the app tells you which mode to switch to.
 - These targets are the `autocrop.*` keys in `coach_config.json`; adjust them to taste
 
 You can also switch to "Manual" on the Settings tab and choose the **width to keep** (80% / 70% / 60% / 50%) and the **final aspect ratio** (3:2, 4:3, 1:1, 4:5, 16:9):
-- A **white frame** (expected final image) appears on the viewfinder, the outside is darkened, and the thirds grid is drawn inside the frame
+- With **Show recognition details** on, a white box marks the planned crop, the area outside it is dimmed and the thirds grid appears inside the box
 - Composition scores and move hints are computed for the white frame; the goal is that the frame fits and the subject sits on its thirds point
 - Cropping magnifies the image: 50mm keeping 60% ≈ 83mm (about 125mm full-frame equivalent). The safe shutter speed uses the effective focal length, and the ISO limit is lowered (60% → 1250)
 - Shows how many megapixels remain after cropping and warns below 8 MP
@@ -178,7 +179,7 @@ The same coach also runs on the phone's own camera, with no Sony camera needed. 
 A third app ("AI Photo Score") scores photos you have already taken, on the phone.
 - Pick photos with the system photo picker (no storage permission needed), or select them in your gallery and Share them to the app
 - Sorted by aesthetic score (about 1–10); the best 20% are marked **★ Best** and burst shots / near-duplicates **Similar** (same rule as the PC picker)
-- Open a photo to see the composition overlay, its rank, the camera settings from EXIF (shutter, aperture, ISO, focal length) and the full checklist; **AI framing** draws the suggested crop (purple frame) with the score it would reach
+- Open a photo to see its labeled subject box, target line and spirit level, with a color key below the image. The detail panel includes the rank, EXIF camera settings and full checklist. **Show recognition details** is at the top of the panel. Tapping **AI framing** also turns it on and shows the recommended crop in purple dashes and its estimated score when a crop is suggested.
 - Advice is written for a photo that is already taken: what to fix when editing, or what to do next time
 
 ## PC photo picker

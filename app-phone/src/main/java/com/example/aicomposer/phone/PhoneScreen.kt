@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,6 +35,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -64,6 +66,8 @@ import com.example.aicomposer.ui.CoachOverlay
 import com.example.aicomposer.ui.FramingReferenceCard
 import com.example.aicomposer.ui.HintStrip
 import com.example.aicomposer.ui.IgnoredRulesSection
+import com.example.aicomposer.ui.OverlayLegend
+import com.example.aicomposer.ui.RecognitionDetailsToggle
 import com.example.aicomposer.ui.Section
 import com.example.aicomposer.ui.TabBar
 import com.example.aicomposer.ui.coachHeadline
@@ -84,16 +88,30 @@ fun PhoneScreen(vm: PhoneViewModel) {
     }
 
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    var showDetails by rememberSaveable { mutableStateOf(false) }
+    val findCrop: () -> Unit = {
+        showDetails = true
+        vm.findBestCrop()
+    }
     // Same layout as the Sony app: landscape = viewfinder left + panel right; portrait = viewfinder top + panel bottom
     val cfg = LocalConfiguration.current
     if (cfg.orientation == Configuration.ORIENTATION_LANDSCAPE) {
         Row(Modifier.fillMaxSize().background(Color.Black)) {
-            Viewfinder(s, vm, Modifier.weight(1f).fillMaxHeight())
+            Column(
+                Modifier.weight(1f).fillMaxHeight(),
+                verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                val previewSize = if (s.cameraReady) {
+                    Modifier.weight(1f, fill = false).aspectRatio(s.frameW.toFloat() / s.frameH)
+                } else Modifier.weight(1f).fillMaxWidth()
+                Viewfinder(s, vm, showDetails, previewSize)
+                if (s.cameraReady) OverlayLegend(showDetails, liveView = true)
+            }
             Column(Modifier.width(340.dp).fillMaxHeight().background(CoachColors.PanelBg)) {
-                Hints(s)
+                Hints(s, showDetails)
                 TabBar(tab) { tab = it }
-                PanelContent(s, vm, tab, Modifier.weight(1f))
-                ActionBar(s, vm) { launcher.launch(Manifest.permission.CAMERA) }
+                PanelContent(s, vm, tab, showDetails, Modifier.weight(1f)) { showDetails = it }
+                ActionBar(s, vm, findCrop) { launcher.launch(Manifest.permission.CAMERA) }
             }
         }
     } else {
@@ -101,21 +119,22 @@ fun PhoneScreen(vm: PhoneViewModel) {
         val aspect = s.frameW.toFloat() / s.frameH
         val vfHeight = minOf(cfg.screenWidthDp / aspect, cfg.screenHeightDp * 0.55f).dp
         Column(Modifier.fillMaxSize().background(CoachColors.PanelBg)) {
-            Viewfinder(s, vm, Modifier.fillMaxWidth().height(vfHeight).background(Color.Black))
-            Hints(s)
+            Viewfinder(s, vm, showDetails, Modifier.fillMaxWidth().height(vfHeight).background(Color.Black))
+            if (s.cameraReady) OverlayLegend(showDetails, liveView = true)
+            Hints(s, showDetails)
             TabBar(tab) { tab = it }
-            PanelContent(s, vm, tab, Modifier.weight(1f))
-            ActionBar(s, vm) { launcher.launch(Manifest.permission.CAMERA) }
+            PanelContent(s, vm, tab, showDetails, Modifier.weight(1f)) { showDetails = it }
+            ActionBar(s, vm, findCrop) { launcher.launch(Manifest.permission.CAMERA) }
         }
     }
 }
 
 @Composable
-private fun Hints(s: PhoneUiState) {
+private fun Hints(s: PhoneUiState, showDetails: Boolean) {
     val headline = coachHeadline(s.composition, s.aesthetic, s.combinedScore, s.autoThreshold, s.analysis?.scene)
     HintStrip(
         headline,
-        hintLines(null, s.crop?.let { it.short ?: it.hint }, s.report),
+        hintLines(null, s.crop?.takeIf { showDetails }?.let { it.short ?: it.hint }, s.report),
         placeholder = s.message.ifEmpty { tr("正在启动相机…", "カメラを起動中…", "Starting the camera…") },
     )
 }
@@ -123,7 +142,7 @@ private fun Hints(s: PhoneUiState) {
 /** Camera preview (FIT_CENTER, 4:3 like the analyzed frames) + the shared overlay. Tap to focus and meter. */
 @SuppressLint("ClickableViewAccessibility")
 @Composable
-private fun Viewfinder(s: PhoneUiState, vm: PhoneViewModel, modifier: Modifier) {
+private fun Viewfinder(s: PhoneUiState, vm: PhoneViewModel, showDetails: Boolean, modifier: Modifier) {
     Box(modifier) {
         if (!s.hasPermission) {
             Text(
@@ -156,7 +175,7 @@ private fun Viewfinder(s: PhoneUiState, vm: PhoneViewModel, modifier: Modifier) 
             }
         }
         AndroidView({ previewView }, Modifier.fillMaxSize())
-        CoachOverlay(s.frameW, s.frameH, s.analysis, s.composition, s.crop?.rect, Modifier.fillMaxSize(), guide = s.guide)
+        CoachOverlay(s.frameW, s.frameH, s.analysis, s.composition, s.crop?.rect, Modifier.fillMaxSize(), guide = s.guide, showDetails = showDetails)
         s.framingReference?.let { reference ->
             FramingReferenceCard(reference, vm::dismissFramingReference, Modifier.align(Alignment.TopEnd).padding(8.dp))
         }
@@ -165,7 +184,7 @@ private fun Viewfinder(s: PhoneUiState, vm: PhoneViewModel, modifier: Modifier) 
 
 /** Bottom action bar: fixed positions, like the Sony app */
 @Composable
-private fun ActionBar(s: PhoneUiState, vm: PhoneViewModel, requestPermission: () -> Unit) {
+private fun ActionBar(s: PhoneUiState, vm: PhoneViewModel, onFindCrop: () -> Unit, requestPermission: () -> Unit) {
     val ready = s.hasPermission && s.cameraReady
     val pad = PaddingValues(horizontal = 4.dp, vertical = 10.dp)
     val tall = Modifier.heightIn(min = 52.dp)
@@ -186,7 +205,7 @@ private fun ActionBar(s: PhoneUiState, vm: PhoneViewModel, requestPermission: ()
         }
         OutlinedButton(
             colors = secondaryButtonColors(),
-            onClick = { vm.findBestCrop() }, enabled = ready && s.aiAvailable && !s.cropBusy,
+            onClick = onFindCrop, enabled = ready && s.aiAvailable && !s.cropBusy,
             contentPadding = pad, modifier = Modifier.weight(1f).then(tall),
         ) { Text(if (s.cropBusy) tr("分析中…", "分析中…", "Working…") else tr("AI构图", "AI 構図", "AI framing"), maxLines = 1) }
         AutoShutterToggle(s.autoShutter, ready, s.autoThreshold, s.aiAvailable) { vm.setAutoShutter(it) }
@@ -194,13 +213,19 @@ private fun ActionBar(s: PhoneUiState, vm: PhoneViewModel, requestPermission: ()
 }
 
 @Composable
-private fun PanelContent(s: PhoneUiState, vm: PhoneViewModel, tab: Int, modifier: Modifier) {
+private fun PanelContent(
+    s: PhoneUiState, vm: PhoneViewModel, tab: Int, showDetails: Boolean, modifier: Modifier,
+    onDetailsChange: (Boolean) -> Unit,
+) {
     key(tab) {
         Column(
             modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            if (tab == 0) GuideTab(s, vm) else SettingsTab(s, vm)
+            if (tab == 0) GuideTab(s, vm) else {
+                RecognitionDetailsToggle(showDetails, onDetailsChange)
+                SettingsTab(s, vm)
+            }
         }
     }
 }

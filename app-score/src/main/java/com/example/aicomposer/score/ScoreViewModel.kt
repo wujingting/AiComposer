@@ -72,6 +72,7 @@ data class ScoreUiState(
     val photos: List<ScoredPhoto> = emptyList(),
     val sort: SortOrder = SortOrder.SCORE,
     val detail: Detail? = null,
+    val showDetails: Boolean = false,
 ) {
     val pending: Int get() = photos.count { !it.done }
     val sorted: List<ScoredPhoto>
@@ -119,6 +120,8 @@ class ScoreViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setSort(s: SortOrder) = _ui.update { it.copy(sort = s) }
+
+    fun setShowDetails(show: Boolean) = _ui.update { it.copy(showDetails = show) }
 
     private suspend fun score(id: Int) {
         val photo = _ui.value.photos.firstOrNull { it.id == id } ?: return // cleared meanwhile
@@ -210,7 +213,7 @@ class ScoreViewModel(app: Application) : AndroidViewModel(app) {
         val m = model ?: return
         val photo = _ui.value.photos.firstOrNull { it.id == d.id } ?: return
         if (d.cropBusy) return
-        _ui.update { s -> s.copy(detail = s.detail?.copy(cropBusy = true)) }
+        _ui.update { s -> s.copy(detail = s.detail?.copy(cropBusy = true), showDetails = true) }
         viewModelScope.launch(Dispatchers.Default) {
             val c = try {
                 m.searchBestCrop(PhotoLoader.load(getApplication(), photo.uri, 1024))

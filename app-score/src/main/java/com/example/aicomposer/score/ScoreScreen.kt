@@ -52,6 +52,8 @@ import com.example.aicomposer.ui.CoachColors
 import com.example.aicomposer.ui.CoachOverlay
 import com.example.aicomposer.ui.CoachType
 import com.example.aicomposer.ui.Note
+import com.example.aicomposer.ui.OverlayLegend
+import com.example.aicomposer.ui.RecognitionDetailsToggle
 import com.example.aicomposer.ui.secondaryButtonColors
 import com.example.aicomposer.ui.Section
 import java.util.Locale
@@ -217,26 +219,36 @@ private fun DetailScreen(s: ScoreUiState, d: Detail, vm: ScoreViewModel) {
     val cfg = LocalConfiguration.current
     if (cfg.orientation == Configuration.ORIENTATION_LANDSCAPE) {
         Row(Modifier.fillMaxSize().background(Color.Black)) {
-            DetailImage(d, Modifier.weight(1f).fillMaxHeight())
+            DetailImage(d, s.showDetails, Modifier.weight(1f).fillMaxHeight())
             DetailPanel(s, photo, d, vm, Modifier.width(360.dp).fillMaxHeight())
         }
     } else {
         Column(Modifier.fillMaxSize().background(CoachColors.PanelBg)) {
-            DetailImage(d, Modifier.fillMaxWidth().height((cfg.screenHeightDp * 0.45f).dp).background(Color.Black))
+            DetailImage(d, s.showDetails, Modifier.fillMaxWidth().height((cfg.screenHeightDp * 0.45f).dp))
             DetailPanel(s, photo, d, vm, Modifier.fillMaxWidth().weight(1f))
         }
     }
 }
 
 @Composable
-private fun DetailImage(d: Detail, modifier: Modifier) {
-    Box(modifier, contentAlignment = Alignment.Center) {
-        val img = d.image
-        if (img == null) {
-            CircularProgressIndicator()
+private fun DetailImage(d: Detail, showDetails: Boolean, modifier: Modifier) {
+    val img = d.image
+    Column(
+        modifier.background(Color.Black),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        if (img != null) {
+            Box(Modifier.weight(1f, fill = false).aspectRatio(img.width.toFloat() / img.height)) {
+                Image(img, tr("照片", "写真", "Photo"), Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                CoachOverlay(
+                    img.width, img.height, d.analysis, d.composition, d.crop?.rect, Modifier.fillMaxSize(),
+                    showDetails = showDetails,
+                )
+            }
+            OverlayLegend(showDetails = showDetails, liveView = false, modifier = Modifier.fillMaxWidth())
         } else {
-            Image(img, tr("照片", "写真", "Photo"), Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
-            CoachOverlay(img.width, img.height, d.analysis, d.composition, d.crop?.rect, Modifier.fillMaxSize())
+            CircularProgressIndicator()
         }
     }
 }
@@ -248,6 +260,7 @@ private fun DetailPanel(s: ScoreUiState, p: ScoredPhoto, d: Detail, vm: ScoreVie
             Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            RecognitionDetailsToggle(checked = s.showDetails, onCheckedChange = vm::setShowDetails)
             Section(tr("AI 美学", "AI 美的評価", "AI aesthetics")) {
                 val a = p.aesthetic
                 if (a != null) {
@@ -275,10 +288,14 @@ private fun DetailPanel(s: ScoreUiState, p: ScoredPhoto, d: Detail, vm: ScoreVie
             d.crop?.let { c ->
                 Section(tr("AI 构图", "AI 構図", "AI framing")) {
                     val text = if (c.rect.w >= 0.99f) tr("现在的构图已经不错，不需要裁剪", "今の構図で十分良く、トリミングは不要です", "The current framing is already good; no crop needed")
-                    else tr(
+                    else if (s.showDetails) tr(
                         "紫框是 AI 建议的裁剪：美学分 ${fmt(c.baseScore)} → ${fmt(c.score)}。后期按紫框裁剪即可",
                         "紫の枠が AI のトリミング提案です：美的評価 ${fmt(c.baseScore)} → ${fmt(c.score)}。編集時にこの枠でトリミングしてください",
                         "The purple frame is the AI's suggested crop: aesthetic ${fmt(c.baseScore)} → ${fmt(c.score)}. Crop to it when editing",
+                    ) else tr(
+                        "建议裁剪后的美学分 ${fmt(c.baseScore)} → ${fmt(c.score)}",
+                        "推奨トリミング後の美的評価 ${fmt(c.baseScore)} → ${fmt(c.score)}",
+                        "Aesthetic score with the suggested crop: ${fmt(c.baseScore)} → ${fmt(c.score)}",
                     )
                     Text(text, fontSize = CoachType.Body, lineHeight = 21.sp, color = CoachColors.Ai)
                 }

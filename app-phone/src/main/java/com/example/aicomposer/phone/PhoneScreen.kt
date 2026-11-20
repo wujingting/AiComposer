@@ -61,6 +61,7 @@ import com.example.aicomposer.ui.CoachType
 import com.example.aicomposer.ui.Note
 import com.example.aicomposer.ui.CoachColors
 import com.example.aicomposer.ui.CoachOverlay
+import com.example.aicomposer.ui.FramingReferenceCard
 import com.example.aicomposer.ui.HintStrip
 import com.example.aicomposer.ui.IgnoredRulesSection
 import com.example.aicomposer.ui.Section
@@ -156,6 +157,9 @@ private fun Viewfinder(s: PhoneUiState, vm: PhoneViewModel, modifier: Modifier) 
         }
         AndroidView({ previewView }, Modifier.fillMaxSize())
         CoachOverlay(s.frameW, s.frameH, s.analysis, s.composition, s.crop?.rect, Modifier.fillMaxSize(), guide = s.guide)
+        s.framingReference?.let { reference ->
+            FramingReferenceCard(reference, vm::dismissFramingReference, Modifier.align(Alignment.TopEnd).padding(8.dp))
+        }
     }
 }
 

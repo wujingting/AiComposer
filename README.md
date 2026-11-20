@@ -30,7 +30,7 @@ The sections below describe the Sony camera version in detail first (most of it 
 | One-tap apply | Writes the suggested settings to the camera (limited by the mode dial, see below) |
 | **AI aesthetic score** | CLIP ViT-B/32 + LAION aesthetic head, about once per second |
 | **AI scene detection** | Zero-shot classification on the same CLIP embedding, more reliable than the rules (action and low light still use rules) |
-| **AI framing** | Searches 19 candidate crops in the frame, marks the best-scoring one with a purple dashed frame, and tells you how to move |
+| **AI framing** | Shows a reference thumbnail from the frame you see when you tap. Standard mode compares 19 compositions and keeps the original framing when cropping offers little improvement. A dashed purple box briefly marks any suggested crop |
 | **Planned crop** | When the lens is not long enough, set how much you will crop later and the final aspect ratio; composition is scored inside the white frame (expected final image), and the safe shutter speed and ISO limit are tightened automatically |
 | Auto shutter | Fires when the combined score (composition rules + aesthetics) stays above the threshold for about 0.75 s, at least 4 s apart |
 | **Direction arrows** | Big yellow arrows on the edge of the viewfinder show which way to turn the camera; one short vibration when the framing falls into place (at most once every 4 s) |
@@ -42,7 +42,8 @@ The sections below describe the Sony camera version in detail first (most of it 
   2. **Guide tab**: checklist, suggested settings, current camera settings, AI aesthetics. These change in real time.
   3. **Settings tab**: auto-shutter threshold, lens focal length, planned crop, ignored rules.
   4. **Bottom action bar** (fixed position): Shoot / Apply / AI framing, auto-shutter switch, Connect / Disconnect.
-- Only graphics are drawn on the viewfinder (thirds grid, detection boxes, spirit level, direction arrows...), so text never covers the image.
+- In both the Sony and phone apps, the reference thumbnail stays fixed so you can compare it with the live view as you move the camera. Tap **AI framing** again to refresh it from the current frame, or use the close button to hide it.
+- The viewfinder shows the thirds grid, detection boxes, spirit level and direction arrows. The Guide panel holds the detailed advice.
 - Built for outdoor use: large text, neutral grey surround (does not bias how you judge the photo's colors), and one signal color: **yellow = what to do** (main button, current choice, arrows); green / orange / red = good / warning / problem. All three apps share these colors and the type scale (`core/ui/Theme.kt`).
 
 ## Build and run (first time)

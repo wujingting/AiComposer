@@ -148,6 +148,9 @@ private fun Viewfinder(s: UiState, vm: MainViewModel, modifier: Modifier) {
         if (s.frameW > 0) {
             LiveImage(vm, Modifier.fillMaxSize())
             CoachOverlay(s.frameW, s.frameH, s.analysis, s.composition, s.crop?.rect, Modifier.fillMaxSize(), guide = s.guide)
+            s.framingReference?.let { reference ->
+                FramingReferenceCard(reference, vm::dismissFramingReference, Modifier.align(Alignment.TopEnd).padding(8.dp))
+            }
         } else {
             // Scrollable so the whole text is readable even when the viewfinder area is short (portrait)
             Column(

@@ -208,7 +208,7 @@ fun CoachOverlay(
         }
 
         // AI suggested framing
-        if (aiCrop != null && aiCrop.w < 0.99f) {
+        if (aiCrop != null && (aiCrop.w < 0.99f || aiCrop.h < 0.99f)) {
             drawRect(
                 color = CoachColors.Ai,
                 topLeft = Offset(px(aiCrop.l), py(aiCrop.t)),

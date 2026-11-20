@@ -45,6 +45,28 @@ data class CropSuggestion(
     val short: String? = null,
 )
 
+/** A still preview of the exact crop selected from a single liveview frame. */
+data class FramingReference(val image: Bitmap, val suggestion: CropSuggestion)
+
+/** In free framing the full frame (index 0) wins if a crop barely improves its score. */
+internal fun recommendedCropIndex(scores: List<Float>, plan: CropPlan): Int {
+    val best = scores.indices.maxBy { scores[it] }
+    return if (!plan.active && scores[best] - scores[0] < 0.15f) 0 else best
+}
+
+internal data class CropPixels(val x: Int, val y: Int, val width: Int, val height: Int)
+
+internal fun NRect.pixelBounds(width: Int, height: Int): CropPixels {
+    val x = (l * width).toInt().coerceIn(0, width - 1)
+    val y = (t * height).toInt().coerceIn(0, height - 1)
+    return CropPixels(x, y, (w * width).toInt().coerceIn(1, width - x), (h * height).toInt().coerceIn(1, height - y))
+}
+
+private fun Bitmap.cropTo(rect: NRect): Bitmap {
+    val bounds = rect.pixelBounds(width, height)
+    return Bitmap.createBitmap(this, bounds.x, bounds.y, bounds.width, bounds.height)
+}
+
 /**
  * CLIP ViT-B/32 image encoder (ONNX) + LAION aesthetic linear head.
  * The same embedding is also used for zero-shot scene classification and "well / poorly composed".
@@ -115,10 +137,9 @@ class AestheticModel private constructor(
         }
         val scores = scoreCrops(frame, cands)
         val base = scores[0]
-        val bestIdx = scores.indices.maxBy { scores[it] }
+        val bestIdx = recommendedCropIndex(scores, plan)
         val bestRect = cands[bestIdx]
-        val gain = scores[bestIdx] - base
-        val hint = if (bestIdx == 0 || gain < 0.15f) {
+        val hint = if (bestIdx == 0) {
             tr("AI：当前构图已经不错（${fmt(base)} 分）", "AI：今の構図で十分良いです（${fmt(base)} 点）", "AI: the current composition is already good (${fmt(base)})")
         } else {
             val dirs = mutableListOf<String>()
@@ -130,9 +151,17 @@ class AestheticModel private constructor(
             val zoom = if (bestRect.w < 0.8f) tr("靠近一点（或拉长焦）", "もう少し近づく（またはズームイン）", "get closer (or zoom in)") else tr("稍微靠近一点", "少しだけ近づく", "get a little closer")
             tr("AI：按紫色框构图更好：$move$zoom（${fmt(base)} → ${fmt(scores[bestIdx])} 分）", "AI：紫の枠の構図がおすすめ：$move$zoom（${fmt(base)} → ${fmt(scores[bestIdx])} 点）", "AI: the purple frame composes better: $move$zoom (${fmt(base)} → ${fmt(scores[bestIdx])})")
         }
-        val short = if (bestIdx == 0 || gain < 0.15f) tr("AI：现在的构图就不错", "AI：今の構図で十分", "AI: framing is already good")
+        val short = if (bestIdx == 0) tr("AI：现在的构图就不错", "AI：今の構図で十分", "AI: framing is already good")
         else tr("AI：按紫框构图 ${fmt(base)}→${fmt(scores[bestIdx])}", "AI：紫の枠へ ${fmt(base)}→${fmt(scores[bestIdx])}", "AI: use the purple frame ${fmt(base)}→${fmt(scores[bestIdx])}")
         return CropSuggestion(bestRect, scores[bestIdx], base, hint, short)
+    }
+
+    fun searchFramingReference(frame: Bitmap, plan: CropPlan = CropPlan()): FramingReference {
+        val suggestion = searchBestCrop(frame, plan)
+        val crop = frame.cropTo(suggestion.rect)
+        // Android can return the source itself for a full-frame crop. Give the preview its own pixels.
+        val image = if (crop === frame) checkNotNull(frame.copy(Bitmap.Config.ARGB_8888, false)) else crop
+        return FramingReference(image, suggestion)
     }
 
     /**
@@ -149,7 +178,7 @@ class AestheticModel private constructor(
         }
         val scores = scoreCrops(frame, cands)
         val centerIdx = 12 // center of the 5×5 grid
-        val bestIdx = scores.indices.maxBy { scores[it] }
+        val bestIdx = recommendedCropIndex(scores, plan)
         val best = cands[bestIdx]
         val dirs = mutableListOf<String>()
         if (cw < 0.98f) {
@@ -190,15 +219,7 @@ class AestheticModel private constructor(
         embedCrops(frame, cands).map { score(it) }
 
     private fun embedCrops(frame: Bitmap, cands: List<NRect>): List<FloatArray> {
-        val w = frame.width
-        val h = frame.height
-        val crops = cands.map { r ->
-            val x = (r.l * w).toInt().coerceIn(0, w - 1)
-            val y = (r.t * h).toInt().coerceIn(0, h - 1)
-            val cw = (r.w * w).toInt().coerceIn(1, w - x)
-            val ch = (r.h * h).toInt().coerceIn(1, h - y)
-            Bitmap.createBitmap(frame, x, y, cw, ch)
-        }
+        val crops = cands.map { frame.cropTo(it) }
         return try {
             crops.chunked(9).flatMap { batch -> embed(batch) }
         } finally {

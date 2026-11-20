@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.aicomposer.ai.AestheticModel
 import com.example.aicomposer.ai.AestheticResult
 import com.example.aicomposer.ai.CropSuggestion
+import com.example.aicomposer.ai.FramingReference
 import com.example.aicomposer.analysis.AnalysisResult
 import com.example.aicomposer.analysis.CompositionAdvice
 import com.example.aicomposer.analysis.CropPlan
@@ -41,6 +42,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -79,6 +81,7 @@ data class UiState(
     val aiAvailable: Boolean = false,
     val aesthetic: AestheticResult? = null,
     val crop: CropSuggestion? = null,
+    val framingReference: FramingReference? = null,
     val cropBusy: Boolean = false,
 ) {
     /** The crop plan actually in use. */
@@ -105,6 +108,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var api: SonyCameraApi? = null
     private var client: OkHttpClient? = null
     private val jobs = mutableListOf<Job>()
+    private var cropJob: Job? = null
 
     @Volatile private var latest: Bitmap? = null
     @Volatile private var aesthetic: AestheticModel? = null
@@ -331,28 +335,41 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val m = aesthetic ?: return
         val bmp = latest ?: return
         if (_ui.value.cropBusy) return
-        _ui.update { it.copy(cropBusy = true) }
-        viewModelScope.launch(Dispatchers.Default) {
+        val plan = _ui.value.effectivePlan
+        cropJob?.cancel()
+        _ui.update { it.copy(cropBusy = true, crop = null) }
+        cropJob = viewModelScope.launch {
             try {
-                val c = m.searchBestCrop(bmp, _ui.value.effectivePlan)
-                _ui.update { it.copy(crop = c, cropBusy = false) }
-                delay(10_000) // clear the purple frame after 10 seconds
-                _ui.update { if (it.crop === c) it.copy(crop = null) else it }
+                val reference = withContext(Dispatchers.Default) { m.searchFramingReference(bmp, plan) }
+                _ui.update { it.copy(framingReference = reference, crop = reference.suggestion, cropBusy = false) }
+                delay(10_000)
+                _ui.update { it.copy(crop = null) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                if (!isActive) return@launch
                 _ui.update { it.copy(cropBusy = false) }
                 msg(tr("AI 构图分析失败：${e.message}", "AI 構図分析に失敗しました：${e.message}", "AI framing failed: ${e.message}"))
             }
         }
     }
 
+    fun dismissFramingReference() {
+        cropJob?.cancel()
+        _ui.update { it.copy(framingReference = null, crop = null, cropBusy = false) }
+    }
+
     fun setAutoShutter(on: Boolean) = _ui.update { it.copy(autoShutter = on) }
     fun setThreshold(v: Int) = updateAndSave { it.copy(autoThreshold = v) }
     fun setFocal(v: Int) = updateAndSave { it.copy(focalLength = v) }
-    fun setCropMode(m: CropMode) = updateAndSave { it.copy(cropMode = m, crop = null) }
-    fun setCropKeep(k: Float) = updateAndSave { it.copy(cropPlan = it.cropPlan.copy(keep = k), crop = null) }
-    fun setCropAspect(a: Float) = updateAndSave { it.copy(cropPlan = it.cropPlan.copy(aspect = a), crop = null) }
+    fun setCropMode(m: CropMode) = updateCropSettings { it.copy(cropMode = m) }
+    fun setCropKeep(k: Float) = updateCropSettings { it.copy(cropPlan = it.cropPlan.copy(keep = k)) }
+    fun setCropAspect(a: Float) = updateCropSettings { it.copy(cropPlan = it.cropPlan.copy(aspect = a)) }
+
+    private fun updateCropSettings(f: (UiState) -> UiState) {
+        dismissFramingReference()
+        updateAndSave(f)
+    }
 
     /** Mark "this is intentional": ignore this rule in the current scene. */
     fun ignoreRule(id: String, name: String, allScenes: Boolean = false) = updateAndSave {
@@ -379,6 +396,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun disconnect() {
+        cropJob?.cancel()
         jobs.forEach { it.cancel() }
         jobs.clear()
         val a = api

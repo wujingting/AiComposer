@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.aicomposer.ai.AestheticModel
 import com.example.aicomposer.ai.AestheticResult
 import com.example.aicomposer.ai.CropSuggestion
+import com.example.aicomposer.ai.FramingReference
 import com.example.aicomposer.analysis.AnalysisResult
 import com.example.aicomposer.analysis.CompositionAdvice
 import com.example.aicomposer.analysis.CropPlan
@@ -26,6 +27,7 @@ import com.example.aicomposer.pipeline.aestheticStatus
 import com.example.aicomposer.pipeline.combinedScore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -33,6 +35,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 data class PhoneUiState(
@@ -59,6 +62,7 @@ data class PhoneUiState(
     val aiAvailable: Boolean = false,
     val aesthetic: AestheticResult? = null,
     val crop: CropSuggestion? = null,
+    val framingReference: FramingReference? = null,
     val cropBusy: Boolean = false,
     val shooting: Boolean = false,
 ) {
@@ -78,6 +82,7 @@ class PhoneViewModel(app: Application) : AndroidViewModel(app) {
     private val pipeline = CoachPipeline(app)
     private val shutterGate = AutoShutterGate()
     private val settingsStore = SettingsStore(app)
+    private var cropJob: Job? = null
     @Volatile private var latest: Bitmap? = null
     @Volatile private var aesthetic: AestheticModel? = null
     @Volatile private var camera: PhoneCamera? = null
@@ -110,14 +115,19 @@ class PhoneViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun attach(cam: PhoneCamera) {
+        latest = null
         camera = cam
         pipeline.reset()
         _ui.update { it.copy(cameraReady = true) }
     }
 
     fun detach(cam: PhoneCamera) {
-        if (camera === cam) camera = null
-        _ui.update { it.copy(cameraReady = false) }
+        if (camera !== cam) return
+        camera = null
+        latest = null
+        cropJob?.cancel()
+        // Keep the finished thumbnail while CameraX rebinds on rotation.
+        _ui.update { it.copy(cameraReady = false, cropBusy = false, crop = null) }
     }
 
     /** Called on the camera thread for every analysis frame (already upright). */
@@ -222,21 +232,28 @@ class PhoneViewModel(app: Application) : AndroidViewModel(app) {
         val m = aesthetic ?: return
         val bmp = latest ?: return
         if (_ui.value.cropBusy) return
-        _ui.update { it.copy(cropBusy = true) }
-        viewModelScope.launch(Dispatchers.Default) {
+        cropJob?.cancel()
+        _ui.update { it.copy(cropBusy = true, crop = null) }
+        cropJob = viewModelScope.launch {
             try {
-                val c = m.searchBestCrop(bmp)
-                _ui.update { it.copy(crop = c, cropBusy = false) }
-                delay(10_000) // clear the purple frame after 10 seconds
-                _ui.update { if (it.crop === c) it.copy(crop = null) else it }
+                val reference = withContext(Dispatchers.Default) { m.searchFramingReference(bmp) }
+                _ui.update { it.copy(framingReference = reference, crop = reference.suggestion, cropBusy = false) }
+                delay(10_000)
+                _ui.update { it.copy(crop = null) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                if (!isActive) return@launch
                 _ui.update {
                     it.copy(cropBusy = false, message = tr("AI 构图分析失败：${e.message}", "AI 構図分析に失敗しました：${e.message}", "AI framing failed: ${e.message}"))
                 }
             }
         }
+    }
+
+    fun dismissFramingReference() {
+        cropJob?.cancel()
+        _ui.update { it.copy(framingReference = null, crop = null, cropBusy = false) }
     }
 
     fun focusAt(x: Float, y: Float) = camera?.focusAt(x, y)
